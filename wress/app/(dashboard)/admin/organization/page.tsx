@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 type Organization = {
   id?: number
@@ -13,6 +13,7 @@ type Organization = {
 }
 
 const API_BASE_URL = "http://127.0.0.1:5000/api/admin"
+const ITEMS_PER_PAGE = 5
 
 const emptyOrganization: Organization = {
   name: "",
@@ -35,6 +36,7 @@ export default function AdminOrganizationPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isAddMode, setIsAddMode] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
 
   const fetchOrganizations = async () => {
     try {
@@ -55,6 +57,14 @@ export default function AdminOrganizationPage() {
   useEffect(() => {
     fetchOrganizations()
   }, [])
+
+  const totalPages = Math.ceil(organizations.length / ITEMS_PER_PAGE)
+
+  const paginatedOrganizations = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+    const endIndex = startIndex + ITEMS_PER_PAGE
+    return organizations.slice(startIndex, endIndex)
+  }, [organizations, currentPage])
 
   const openAddModal = () => {
     setIsAddMode(true)
@@ -169,6 +179,19 @@ export default function AdminOrganizationPage() {
       }
 
       setMessage(data.message || "Organization deleted successfully")
+
+      const updatedOrganizations = organizations.filter(
+        (org) => org.id !== organizationToDelete.id
+      )
+      const newTotalPages = Math.max(
+        1,
+        Math.ceil(updatedOrganizations.length / ITEMS_PER_PAGE)
+      )
+
+      if (currentPage > newTotalPages) {
+        setCurrentPage(newTotalPages)
+      }
+
       await fetchOrganizations()
 
       if (isModalOpen && selectedOrganization.id === organizationToDelete.id) {
@@ -218,7 +241,9 @@ export default function AdminOrganizationPage() {
                 <th className="w-24 px-4 py-3 font-medium">Logo</th>
                 <th className="px-4 py-3 font-medium">Organization Name</th>
                 <th className="px-4 py-3 font-medium">Contact Email</th>
-                <th className="w-40 px-4 py-3 font-medium">Subscription Plan</th>
+                <th className="w-40 px-4 py-3 font-medium">
+                  Subscription Plan
+                </th>
                 <th className="w-40 px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
@@ -236,7 +261,7 @@ export default function AdminOrganizationPage() {
                   </td>
                 </tr>
               ) : (
-                organizations.map((org) => (
+                paginatedOrganizations.map((org) => (
                   <tr key={org.id} className="border-t">
                     <td className="px-4 py-3">
                       {org.logo ? (
@@ -287,6 +312,50 @@ export default function AdminOrganizationPage() {
             </tbody>
           </table>
         </div>
+
+        {!fetching && organizations.length > 0 && (
+          <div className="flex items-center justify-between border-t px-4 py-3">
+            <p className="text-sm text-slate-600">
+              Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to{" "}
+              {Math.min(currentPage * ITEMS_PER_PAGE, organizations.length)} of{" "}
+              {organizations.length} organizations
+            </p>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage((prev) => prev - 1)}
+                disabled={currentPage === 1}
+                className="rounded-lg border px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous
+              </button>
+
+              {Array.from({ length: totalPages }, (_, index) => index + 1).map(
+                (page) => (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`rounded-lg px-3 py-1.5 text-sm ${
+                      currentPage === page
+                        ? "bg-slate-900 text-white"
+                        : "border text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    {page}
+                  </button>
+                )
+              )}
+
+              <button
+                onClick={() => setCurrentPage((prev) => prev + 1)}
+                disabled={currentPage === totalPages}
+                className="rounded-lg border px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {isModalOpen && (

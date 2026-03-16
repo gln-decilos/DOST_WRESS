@@ -28,8 +28,9 @@ const items: Item[] = [
   { href: "/admin/dashboard", label: "Dashboard", icon: Home },
   { href: "/admin/profile", label: "Profile", icon: UserRound },
   { href: "/admin/organization", label: "Organization", icon: MessageCircle },
-  { href: "/admin/users", label: "Users", icon: UserRound },
   { href: "/admin/roles", label: "Roles", icon: Shield },
+  { href: "/admin/users", label: "Users", icon: UserRound },
+
 ]
 export function Sidebar() {
   const pathname = usePathname()

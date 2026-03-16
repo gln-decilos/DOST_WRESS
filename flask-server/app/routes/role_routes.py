@@ -28,7 +28,8 @@ def create_role():
         return jsonify({"message": "No input data provided"}), 400
 
     name = data.get("name", "").strip()
-    description = data.get("description", "").strip()
+    description = data.get("description", "")
+    description = description.strip() if isinstance(description, str) else None
 
     if not name:
         return jsonify({"message": "Role name is required"}), 400
@@ -57,8 +58,14 @@ def update_role(role_id):
 
     data = request.get_json()
 
-    name = data.get("name", role.name).strip()
+    if not data:
+        return jsonify({"message": "No input data provided"}), 400
+
+    name = data.get("name", role.name)
     description = data.get("description", role.description)
+
+    name = name.strip() if isinstance(name, str) else ""
+    description = description.strip() if isinstance(description, str) else None
 
     if not name:
         return jsonify({"message": "Role name is required"}), 400
@@ -76,3 +83,16 @@ def update_role(role_id):
         "message": "Role updated successfully",
         "role": role.to_dict()
     }), 200
+
+
+@role_bp.route("/roles/<int:role_id>", methods=["DELETE"])
+def delete_role(role_id):
+    role = Role.query.get(role_id)
+
+    if not role:
+        return jsonify({"message": "Role not found"}), 404
+
+    db.session.delete(role)
+    db.session.commit()
+
+    return jsonify({"message": "Role deleted successfully"}), 200
