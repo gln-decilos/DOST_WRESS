@@ -162,7 +162,10 @@ export default function RolesPage() {
       setMessage(data.message || "Role deleted successfully")
 
       const updatedRoles = roles.filter((role) => role.id !== roleToDelete.id)
-      const newTotalPages = Math.max(1, Math.ceil(updatedRoles.length / ITEMS_PER_PAGE))
+      const newTotalPages = Math.max(
+        1,
+        Math.ceil(updatedRoles.length / ITEMS_PER_PAGE)
+      )
 
       if (currentPage > newTotalPages) {
         setCurrentPage(newTotalPages)
@@ -195,22 +198,22 @@ export default function RolesPage() {
 
         <button
           onClick={openAddModal}
-          className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-white hover:bg-slate-800"
+          className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
         >
           Add Role
         </button>
       </div>
 
       {message && (
-        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+        <div className="mb-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
           {message}
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border bg-white">
+      <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-700">
+            <thead className="bg-muted/40 text-left text-foreground">
               <tr>
                 <th className="px-4 py-3 font-medium">Role Name</th>
                 <th className="px-4 py-3 font-medium">Description</th>
@@ -220,24 +223,24 @@ export default function RolesPage() {
             <tbody>
               {fetching ? (
                 <tr>
-                  <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
                     Loading roles...
                   </td>
                 </tr>
               ) : roles.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
                     No roles found.
                   </td>
                 </tr>
               ) : (
                 paginatedRoles.map((role) => (
-                  <tr key={role.id} className="border-t">
-                    <td className="px-4 py-3 font-medium text-slate-800">
+                  <tr key={role.id} className="border-t border-border">
+                    <td className="px-4 py-3 font-medium text-foreground">
                       {role.name}
                     </td>
 
-                    <td className="px-4 py-3 text-slate-600">
+                    <td className="px-4 py-3 text-muted-foreground">
                       {role.description || "No description provided."}
                     </td>
 
@@ -245,14 +248,14 @@ export default function RolesPage() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => openEditModal(role)}
-                          className="rounded-lg border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
                         >
                           Edit
                         </button>
 
                         <button
                           onClick={() => openDeleteModal(role)}
-                          className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                          className="rounded-lg border border-destructive/30 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
                         >
                           Delete
                         </button>
@@ -266,8 +269,8 @@ export default function RolesPage() {
         </div>
 
         {!fetching && roles.length > 0 && (
-          <div className="flex items-center justify-between border-t px-4 py-3">
-            <p className="text-sm text-slate-600">
+          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+            <p className="text-sm text-muted-foreground">
               Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to{" "}
               {Math.min(currentPage * ITEMS_PER_PAGE, roles.length)} of {roles.length} roles
             </p>
@@ -276,7 +279,7 @@ export default function RolesPage() {
               <button
                 onClick={() => setCurrentPage((prev) => prev - 1)}
                 disabled={currentPage === 1}
-                className="rounded-lg border px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Previous
               </button>
@@ -287,8 +290,8 @@ export default function RolesPage() {
                   onClick={() => setCurrentPage(page)}
                   className={`rounded-lg px-3 py-1.5 text-sm ${
                     currentPage === page
-                      ? "bg-slate-900 text-white"
-                      : "border text-slate-700 hover:bg-slate-50"
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border text-foreground hover:bg-muted"
                   }`}
                 >
                   {page}
@@ -298,7 +301,7 @@ export default function RolesPage() {
               <button
                 onClick={() => setCurrentPage((prev) => prev + 1)}
                 disabled={currentPage === totalPages}
-                className="rounded-lg border px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Next
               </button>
@@ -309,15 +312,15 @@ export default function RolesPage() {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-bold">
+              <h2 className="text-xl font-bold text-foreground">
                 {isAddMode ? "Add Role" : "Edit Role"}
               </h2>
 
               <button
                 onClick={closeModal}
-                className="rounded-md px-3 py-1 text-slate-500 hover:bg-slate-100"
+                className="rounded-md px-3 py-1 text-muted-foreground hover:bg-muted"
               >
                 ✕
               </button>
@@ -325,7 +328,7 @@ export default function RolesPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Role Name
                 </label>
                 <input
@@ -333,46 +336,42 @@ export default function RolesPage() {
                   name="name"
                   value={selectedRole.name}
                   onChange={handleChange}
-                  className="w-full rounded-lg border px-3 py-2"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   placeholder="Enter role name"
                   required
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Description
                 </label>
                 <textarea
                   name="description"
                   value={selectedRole.description}
                   onChange={handleChange}
-                  className="w-full rounded-lg border px-3 py-2"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   placeholder="Enter role description"
                   rows={4}
                 />
               </div>
 
-              {message && <p className="text-sm text-slate-600">{message}</p>}
+              {message && <p className="text-sm text-muted-foreground">{message}</p>}
 
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="submit"
                   disabled={loading}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-white hover:bg-slate-800 disabled:opacity-60"
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
-                  {loading
-                    ? "Saving..."
-                    : isAddMode
-                      ? "Add Role"
-                      : "Update Role"}
+                  {loading ? "Saving..." : isAddMode ? "Add Role" : "Update Role"}
                 </button>
 
                 {!isAddMode && (
                   <button
                     type="button"
                     onClick={() => openDeleteModal(selectedRole)}
-                    className="rounded-lg border border-red-200 px-4 py-2 text-red-600 hover:bg-red-50"
+                    className="rounded-lg border border-destructive/30 px-4 py-2 text-destructive hover:bg-destructive/10"
                   >
                     Delete
                   </button>
@@ -381,7 +380,7 @@ export default function RolesPage() {
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="rounded-lg border px-4 py-2 text-slate-700 hover:bg-slate-50"
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
                 >
                   Cancel
                 </button>
@@ -393,14 +392,14 @@ export default function RolesPage() {
 
       {isDeleteModalOpen && roleToDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
               Delete Role
             </h3>
 
-            <p className="mt-3 text-sm text-slate-600">
+            <p className="mt-3 text-sm text-muted-foreground">
               Are you sure you want to delete{" "}
-              <span className="font-semibold text-slate-900">
+              <span className="font-semibold text-foreground">
                 {roleToDelete.name}
               </span>
               ? This action cannot be undone.
@@ -411,7 +410,7 @@ export default function RolesPage() {
                 type="button"
                 onClick={closeDeleteModal}
                 disabled={loading}
-                className="rounded-lg border px-4 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -420,7 +419,7 @@ export default function RolesPage() {
                 type="button"
                 onClick={confirmDelete}
                 disabled={loading}
-                className="rounded-lg bg-red-600 px-4 py-2 text-white hover:bg-red-700 disabled:opacity-60"
+                className="rounded-lg bg-destructive px-4 py-2 text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
               >
                 {loading ? "Deleting..." : "Confirm Delete"}
               </button>

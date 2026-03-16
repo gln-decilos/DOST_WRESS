@@ -41,7 +41,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search rooms, devices, or users..."
+              placeholder="Search here"
               className="w-full rounded-full border bg-background pl-9 pr-3 py-2 text-sm"
               aria-label="Search"
             />

@@ -221,22 +221,22 @@ export default function AdminOrganizationPage() {
 
         <button
           onClick={openAddModal}
-          className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-white hover:bg-slate-800"
+          className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
         >
           Add Organization
         </button>
       </div>
 
       {message && (
-        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+        <div className="mb-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
           {message}
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border bg-white">
+      <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-700">
+            <thead className="bg-muted/40 text-left text-foreground">
               <tr>
                 <th className="w-24 px-4 py-3 font-medium">Logo</th>
                 <th className="px-4 py-3 font-medium">Organization Name</th>
@@ -250,42 +250,48 @@ export default function AdminOrganizationPage() {
             <tbody>
               {fetching ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-4 py-6 text-center text-muted-foreground"
+                  >
                     Loading organizations...
                   </td>
                 </tr>
               ) : organizations.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-4 py-6 text-center text-muted-foreground"
+                  >
                     No organizations found.
                   </td>
                 </tr>
               ) : (
                 paginatedOrganizations.map((org) => (
-                  <tr key={org.id} className="border-t">
+                  <tr key={org.id} className="border-t border-border">
                     <td className="px-4 py-3">
                       {org.logo ? (
                         <img
                           src={org.logo}
                           alt={org.name}
-                          className="h-12 w-12 rounded-lg border object-cover"
+                          className="h-12 w-12 rounded-lg border border-border object-cover"
                         />
                       ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-slate-100 text-xs text-slate-400">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-muted text-xs text-muted-foreground">
                           No Logo
                         </div>
                       )}
                     </td>
 
-                    <td className="px-4 py-3 font-medium text-slate-800">
+                    <td className="px-4 py-3 font-medium text-foreground">
                       {org.name}
                     </td>
 
-                    <td className="px-4 py-3 text-slate-600">
+                    <td className="px-4 py-3 text-muted-foreground">
                       {org.contact_email || "-"}
                     </td>
 
-                    <td className="px-4 py-3 text-slate-600">
+                    <td className="px-4 py-3 text-muted-foreground">
                       {org.subscription_plan}
                     </td>
 
@@ -293,14 +299,14 @@ export default function AdminOrganizationPage() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => openEditModal(org)}
-                          className="rounded-lg border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
                         >
                           Edit
                         </button>
 
                         <button
                           onClick={() => openDeleteModal(org)}
-                          className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                          className="rounded-lg border border-destructive/30 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
                         >
                           Delete
                         </button>
@@ -314,8 +320,8 @@ export default function AdminOrganizationPage() {
         </div>
 
         {!fetching && organizations.length > 0 && (
-          <div className="flex items-center justify-between border-t px-4 py-3">
-            <p className="text-sm text-slate-600">
+          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+            <p className="text-sm text-muted-foreground">
               Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to{" "}
               {Math.min(currentPage * ITEMS_PER_PAGE, organizations.length)} of{" "}
               {organizations.length} organizations
@@ -325,7 +331,7 @@ export default function AdminOrganizationPage() {
               <button
                 onClick={() => setCurrentPage((prev) => prev - 1)}
                 disabled={currentPage === 1}
-                className="rounded-lg border px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Previous
               </button>
@@ -337,8 +343,8 @@ export default function AdminOrganizationPage() {
                     onClick={() => setCurrentPage(page)}
                     className={`rounded-lg px-3 py-1.5 text-sm ${
                       currentPage === page
-                        ? "bg-slate-900 text-white"
-                        : "border text-slate-700 hover:bg-slate-50"
+                        ? "bg-primary text-primary-foreground"
+                        : "border border-border text-foreground hover:bg-muted"
                     }`}
                   >
                     {page}
@@ -349,7 +355,7 @@ export default function AdminOrganizationPage() {
               <button
                 onClick={() => setCurrentPage((prev) => prev + 1)}
                 disabled={currentPage === totalPages}
-                className="rounded-lg border px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Next
               </button>
@@ -360,15 +366,15 @@ export default function AdminOrganizationPage() {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-bold">
+              <h2 className="text-xl font-bold text-foreground">
                 {isAddMode ? "Add Organization" : "Edit Organization"}
               </h2>
 
               <button
                 onClick={closeModal}
-                className="rounded-md px-3 py-1 text-slate-500 hover:bg-slate-100"
+                className="rounded-md px-3 py-1 text-muted-foreground hover:bg-muted"
               >
                 ✕
               </button>
@@ -376,7 +382,7 @@ export default function AdminOrganizationPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Organization Name
                 </label>
                 <input
@@ -384,37 +390,39 @@ export default function AdminOrganizationPage() {
                   name="name"
                   value={selectedOrganization.name}
                   onChange={handleChange}
-                  className="w-full rounded-lg border px-3 py-2"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   placeholder="Enter organization name"
                   required
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Logo Upload
                 </label>
                 <input
                   type="file"
                   accept="image/*"
                   onChange={handleLogoUpload}
-                  className="w-full rounded-lg border px-3 py-2"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground file:text-foreground"
                 />
 
                 {selectedOrganization.logo && (
                   <div className="mt-3">
-                    <p className="mb-2 text-sm text-slate-500">Logo Preview</p>
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      Logo Preview
+                    </p>
                     <img
                       src={selectedOrganization.logo}
                       alt="Logo Preview"
-                      className="h-20 w-20 rounded-lg border object-cover"
+                      className="h-20 w-20 rounded-lg border border-border object-cover"
                     />
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Contact Email
                 </label>
                 <input
@@ -422,20 +430,20 @@ export default function AdminOrganizationPage() {
                   name="contact_email"
                   value={selectedOrganization.contact_email}
                   onChange={handleChange}
-                  className="w-full rounded-lg border px-3 py-2"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   placeholder="admin@organization.com"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Subscription Plan
                 </label>
                 <select
                   name="subscription_plan"
                   value={selectedOrganization.subscription_plan}
                   onChange={handleChange}
-                  className="w-full rounded-lg border px-3 py-2"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                 >
                   <option value="Basic">Basic</option>
                   <option value="Standard">Standard</option>
@@ -443,13 +451,15 @@ export default function AdminOrganizationPage() {
                 </select>
               </div>
 
-              {message && <p className="text-sm text-slate-600">{message}</p>}
+              {message && (
+                <p className="text-sm text-muted-foreground">{message}</p>
+              )}
 
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="submit"
                   disabled={loading}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-white hover:bg-slate-800 disabled:opacity-60"
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
                   {loading
                     ? "Saving..."
@@ -462,7 +472,7 @@ export default function AdminOrganizationPage() {
                   <button
                     type="button"
                     onClick={() => openDeleteModal(selectedOrganization)}
-                    className="rounded-lg border border-red-200 px-4 py-2 text-red-600 hover:bg-red-50"
+                    className="rounded-lg border border-destructive/30 px-4 py-2 text-destructive hover:bg-destructive/10"
                   >
                     Delete
                   </button>
@@ -471,7 +481,7 @@ export default function AdminOrganizationPage() {
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="rounded-lg border px-4 py-2 text-slate-700 hover:bg-slate-50"
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
                 >
                   Cancel
                 </button>
@@ -483,14 +493,14 @@ export default function AdminOrganizationPage() {
 
       {isDeleteModalOpen && organizationToDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
               Delete Organization
             </h3>
 
-            <p className="mt-3 text-sm text-slate-600">
+            <p className="mt-3 text-sm text-muted-foreground">
               Are you sure you want to delete{" "}
-              <span className="font-semibold text-slate-900">
+              <span className="font-semibold text-foreground">
                 {organizationToDelete.name}
               </span>
               ? This action cannot be undone.
@@ -501,7 +511,7 @@ export default function AdminOrganizationPage() {
                 type="button"
                 onClick={closeDeleteModal}
                 disabled={loading}
-                className="rounded-lg border px-4 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -510,7 +520,7 @@ export default function AdminOrganizationPage() {
                 type="button"
                 onClick={confirmDelete}
                 disabled={loading}
-                className="rounded-lg bg-red-600 px-4 py-2 text-white hover:bg-red-700 disabled:opacity-60"
+                className="rounded-lg bg-destructive px-4 py-2 text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
               >
                 {loading ? "Deleting..." : "Confirm Delete"}
               </button>
