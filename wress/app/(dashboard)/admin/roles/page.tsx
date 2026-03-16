@@ -419,7 +419,7 @@ export default function RolesPage() {
                 type="button"
                 onClick={confirmDelete}
                 disabled={loading}
-                className="rounded-lg bg-destructive px-4 py-2 text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
+                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
               >
                 {loading ? "Deleting..." : "Confirm Delete"}
               </button>

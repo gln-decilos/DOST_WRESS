@@ -7,6 +7,12 @@ class Role(db.Model):
     name = db.Column(db.String(50), unique=True, nullable=False)
     description = db.Column(db.String(255))
 
+    user_roles = db.relationship(
+        "UserRole",
+        back_populates="role",
+        cascade="all, delete-orphan"
+    )
+
     def to_dict(self):
         return {
             "id": self.id,

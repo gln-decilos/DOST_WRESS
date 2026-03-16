@@ -6,17 +6,31 @@ def create_app():
     app = Flask(__name__)
     CORS(app)
 
+    # =========================
+    # CONFIG
+    # =========================
     app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql://wress_admin:postgres123!@localhost:5432/wress_db"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = "dev-secret-key"
 
+    # =========================
+    # EXTENSIONS
+    # =========================
     db.init_app(app)
     migrate.init_app(app, db)
 
+    # =========================
+    # MODELS (important: include new models)
+    # =========================
     from app.models.organization import Organization
     from app.models.role import Role
     from app.models.user import User
+    from app.models.user_roles import UserRole  
+    from app.models.organization_member import OrganizationMember 
 
+    # =========================
+    # ROUTES / BLUEPRINTS
+    # =========================
     from app.routes.auth_routes import auth_bp
     from app.routes.admin_routes import admin_bp
     from app.routes.organization_routes import organization_bp
