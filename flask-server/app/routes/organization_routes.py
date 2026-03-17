@@ -97,9 +97,6 @@ def delete_organization(org_id):
 
     if not organization:
         return jsonify({"message": "Organization not found"}), 404
-    
-    if organization.user:
-        return jsonify({"message": "Cannot delete organization because it still has users assigned"}), 400
 
     db.session.delete(organization)
     db.session.commit()

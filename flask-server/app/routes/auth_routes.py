@@ -1,27 +1,54 @@
-from flask import Blueprint, request, jsonify
-from app.extensions import db
+from flask import Blueprint, request, jsonify, session
 from app.models.user import User
 
-auth_bp = Blueprint("auth", __name__)
+auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
-@auth_bp.route("/signup", methods=["POST"])
-def signup():
-    data = request.get_json()
 
-    existing_user = User.query.filter_by(email=data["email"]).first()
-    if existing_user:
-        return jsonify({"message": "Email already exists"}), 400
+@auth_bp.route("/signin", methods=["POST"])
+def signin():
+    data = request.get_json(silent=True) or {}
 
-    user = User(
-        first_name=data["first_name"],
-        last_name=data["last_name"],
-        email=data["email"],
-        organization_id=data["organization_id"],
-        role_id=data["role_id"]
-    )
-    user.set_password(data["password"])
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
 
-    db.session.add(user)
-    db.session.commit()
+    if not email or not password:
+        return jsonify({"message": "Email and password are required."}), 400
 
-    return jsonify({"message": "User created successfully"}), 201
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"message": "Invalid email or password."}), 401
+
+    if not user.is_active:
+        return jsonify({"message": "Your account is inactive."}), 403
+
+    if not user.check_password(password):
+        return jsonify({"message": "Invalid email or password."}), 401
+
+    session["user_id"] = user.id
+
+    return jsonify({
+        "message": "Sign in successful.",
+        "user": user.to_dict()
+    }), 200
+
+
+@auth_bp.route("/me", methods=["GET"])
+def me():
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({"message": "Not authenticated."}), 401
+
+    user = User.query.get(user_id)
+
+    if not user:
+        return jsonify({"message": "User not found."}), 404
+
+    return jsonify({"user": user.to_dict()}), 200
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    session.pop("user_id", None)
+    return jsonify({"message": "Logged out successfully."}), 200
