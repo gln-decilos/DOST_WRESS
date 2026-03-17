@@ -29,6 +29,7 @@ def create_app():
     from app.models.user import User
     from app.models.user_roles import UserRole
     from app.models.organization_member import OrganizationMember
+    from app.models.project import Project
 
     # ROUTES
     from app.routes.auth_routes import auth_bp

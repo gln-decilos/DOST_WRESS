@@ -22,6 +22,12 @@ class Organization(db.Model):
         cascade="all, delete-orphan"
     )
 
+    projects = db.relationship(
+        "Project",
+        back_populates="organization",
+        cascade="all, delete-orphan"
+    )
+
     def to_dict(self):
         return {
             "id": self.id,
