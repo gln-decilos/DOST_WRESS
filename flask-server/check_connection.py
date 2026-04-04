@@ -23,12 +23,12 @@ def check_connection():
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
         version = cursor.fetchone()
-        print("✅ Connected to PostgreSQL successfully!")
+        print("Connected to PostgreSQL successfully!")
         print(f"PostgreSQL version: {version[0]}")
         cursor.close()
         conn.close()
     except OperationalError as e:
-        print("❌ Failed to connect to PostgreSQL!")
+        print("Failed to connect to PostgreSQL!")
         print(e)
 
 if __name__ == "__main__":

@@ -2,10 +2,10 @@
 
 import type React from "react"
 import { useState } from "react"
-import { Sidebar } from "@/components/partials/admin-sidebar"
+import { Sidebar } from "@/components/partials/business-analyst-sidebar"
 import { Topbar } from "@/components/topbar"
 
-export default function AdminLayout({
+export default function BusinessAnalystLayout({
   children,
 }: {
   children: React.ReactNode
