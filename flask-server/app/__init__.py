@@ -37,11 +37,13 @@ def create_app():
     from app.routes.organization_routes import organization_bp
     from app.routes.role_routes import role_bp
     from app.routes.user_routes import user_bp
+    from app.routes.business_analyst.project_routes import business_project_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(organization_bp, url_prefix="/api/admin")
     app.register_blueprint(role_bp, url_prefix="/api/admin")
     app.register_blueprint(user_bp, url_prefix="/api/admin")
+    app.register_blueprint(business_project_bp, url_prefix="/api/business-analyst")
 
     return app
