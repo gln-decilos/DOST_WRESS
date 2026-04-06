@@ -2,6 +2,7 @@ from flask import Flask
 from flask_cors import CORS
 from app.extensions import db, migrate
 
+
 def create_app():
     app = Flask(__name__)
 
@@ -9,6 +10,8 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql://wress_admin:postgres123!@localhost:5432/wress_db"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = "dev-secret-key"
+
+    # SESSION / COOKIE
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False
@@ -16,12 +19,19 @@ def create_app():
     CORS(
         app,
         supports_credentials=True,
-        resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}}
+        resources={
+            r"/api/*": {
+                "origins": [
+                    "http://127.0.0.1:3000",
+                    "http://localhost:3000",
+                ]
+            }
+        },
     )
 
     # EXTENSIONS
     db.init_app(app)
-    migrate.init_app(app, db) 
+    migrate.init_app(app, db)
 
     # MODELS
     from app.models.organization import Organization

@@ -24,7 +24,7 @@ type ProjectForm = {
   organization_id: string
 }
 
-const API_BASE_URL = "http://127.0.0.1:5000/api/business-analyst"
+const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const ITEMS_PER_PAGE = 6
 
 const emptyProject: ProjectForm = {

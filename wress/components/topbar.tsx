@@ -1,7 +1,8 @@
 "use client"
 
-import { Bell, Search, Settings, User, Menu } from "lucide-react"
-import { useState } from "react"
+import { Bell, Search, Settings, User, Menu, LogOut } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,12 +19,91 @@ interface TopbarProps {
   onMenuClick?: () => void
 }
 
+type UserRole = {
+  id: number
+  name: string
+}
+
+type AuthUser = {
+  id: number
+  first_name: string
+  last_name: string
+  full_name: string
+  email: string
+  roles: UserRole[]
+}
+
+const API_BASE_URL = "http://localhost:5000/api/auth"
 export function Topbar({ onMenuClick }: TopbarProps) {
+  const router = useRouter()
   const [q, setQ] = useState("")
+  const [user, setUser] = useState<AuthUser | null>(null)
+
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/me`, {
+          method: "GET",
+          credentials: "include",
+        })
+
+        if (!response.ok) return
+
+        const data = await response.json()
+        setUser(data.user)
+      } catch (error) {
+        console.error("Failed to load current user:", error)
+      }
+    }
+
+    fetchCurrentUser()
+  }, [])
+
+  const initials = useMemo(() => {
+    if (!user) return "U"
+
+    const first = user.first_name?.charAt(0) || ""
+    const last = user.last_name?.charAt(0) || ""
+
+    return `${first}${last}`.toUpperCase() || "U"
+  }, [user])
+
+  const profileHref = useMemo(() => {
+    const roleNames = user?.roles?.map((role) => role.name) || []
+
+    if (roleNames.includes("Administrator")) {
+      return "/admin/profile"
+    }
+
+    if (roleNames.includes("Business Analyst")) {
+      return "/business-analyst/profile"
+    }
+
+    return "/profile"
+  }, [user])
+
+  const handleLogout = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/logout`, {
+        method: "POST",
+        credentials: "include",
+      })
+
+      if (!response.ok) {
+        console.error("Logout failed")
+        return
+      }
+
+      router.push("/signin")
+      router.refresh()
+    } catch (error) {
+      console.error("Failed to logout:", error)
+    }
+  }
 
   return (
     <header className="lg:-mx-7 sticky top-0 z-30 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border mb-6 rounded-xl lg:rounded-none">
-      <div className="h-16 px-4 md:px-7  flex items-center justify-between gap-3">
+      <div className="h-16 px-4 md:px-7 flex items-center justify-between gap-3">
         <button
           onClick={onMenuClick}
           className="lg:hidden rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2"
@@ -32,7 +112,6 @@ export function Topbar({ onMenuClick }: TopbarProps) {
           <Menu className="size-5" />
         </button>
 
-        {/* Search */}
         <div className="flex-1 max-w-xl">
           <label className="relative block">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
@@ -48,9 +127,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
           </label>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-2">
-          {/* Notifications */}
           <DropdownMenu>
             <DropdownMenuTrigger className="relative rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2">
               <Bell className="size-5" aria-hidden />
@@ -66,11 +143,12 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <DropdownMenuItem>Front door locked</DropdownMenuItem>
               <DropdownMenuItem>HVAC filter reminder</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-muted-foreground">View all</DropdownMenuItem>
+              <DropdownMenuItem className="text-muted-foreground">
+                View all
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Settings */}
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2">
               <Settings className="size-5" aria-hidden />
@@ -89,35 +167,36 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <div className="px-2 py-1.5">
                 <ThemeToggle />
               </div>
-              {/* Brand color picker */}
               <div className="px-2 pb-2">
                 <ColorThemePicker />
               </div>
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* User dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full p-1.5 hover:bg-muted focus:outline-none focus:ring-2">
               <Avatar className="size-8">
-                <AvatarFallback>JR</AvatarFallback>
+                <AvatarFallback>{initials}</AvatarFallback>
               </Avatar>
               <span className="sr-only">Open user menu</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="flex items-center gap-2">
                 <User className="size-4" />
-                Signed in as Jennifer
+                {user ? `Signed in as ${user.full_name}` : "Signed in"}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <a href="/profile">Profile</a>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <a href="/devices">My devices</a>
+                <a href={profileHref}>Profile</a>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive">Sign out</DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleLogout}
+                className="text-destructive flex items-center gap-2"
+              >
+                <LogOut className="size-4" />
+                Sign out
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

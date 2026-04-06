@@ -4,7 +4,20 @@ import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 
-const API_BASE_URL = "http://127.0.0.1:5000/api/auth"
+const API_BASE_URL = "http://localhost:5000/api/auth"
+type UserRole = {
+  id: number
+  name: string
+}
+
+type SignedInUser = {
+  id: number
+  first_name: string
+  last_name: string
+  full_name: string
+  email: string
+  roles: UserRole[]
+}
 
 export default function SignInPage() {
   const router = useRouter()
@@ -13,6 +26,20 @@ export default function SignInPage() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
+
+  const getRedirectPathByRole = (roles: UserRole[]) => {
+    const roleNames = roles.map((role) => role.name)
+
+    if (roleNames.includes("Administrator")) {
+      return "/admin/dashboard"
+    }
+
+    if (roleNames.includes("Business Analyst")) {
+      return "/business-analyst/dashboard"
+    }
+
+    return "/signin"
+  }
 
   const handleSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -39,8 +66,21 @@ export default function SignInPage() {
         return
       }
 
-      setMessage("Sign in successful.")
-      router.push("/dashboard")
+      const user: SignedInUser | undefined = data.user
+
+      if (!user) {
+        setMessage("User data was not returned.")
+        return
+      }
+
+      const redirectPath = getRedirectPathByRole(user.roles || [])
+
+      if (redirectPath === "/signin") {
+        setMessage("No dashboard is available for your role yet.")
+        return
+      }
+
+      router.push(redirectPath)
     } catch (error) {
       setMessage("Unable to connect to the server.")
     } finally {
@@ -84,9 +124,7 @@ export default function SignInPage() {
             />
           </label>
 
-          {message && (
-            <p className="text-sm text-red-500">{message}</p>
-          )}
+          {message && <p className="text-sm text-red-500">{message}</p>}
 
           <button
             type="submit"
@@ -103,10 +141,6 @@ export default function SignInPage() {
             Sign up
           </Link>
         </p>
-
-        <Link href="/dashboard" className="text-brand text-sm">
-          Back to Dashboard
-        </Link>
       </div>
     </main>
   )

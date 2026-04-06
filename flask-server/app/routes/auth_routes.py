@@ -26,6 +26,9 @@ def signin():
         return jsonify({"message": "Invalid email or password."}), 401
 
     session["user_id"] = user.id
+    session.modified = True
+
+    print("SIGNIN SESSION:", dict(session))
 
     return jsonify({
         "message": "Sign in successful.",
@@ -35,6 +38,8 @@ def signin():
 
 @auth_bp.route("/me", methods=["GET"])
 def me():
+    print("ME SESSION:", dict(session))
+
     user_id = session.get("user_id")
 
     if not user_id:
@@ -51,4 +56,6 @@ def me():
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
     session.pop("user_id", None)
+    session.modified = True
+    print("LOGOUT SESSION:", dict(session))
     return jsonify({"message": "Logged out successfully."}), 200
