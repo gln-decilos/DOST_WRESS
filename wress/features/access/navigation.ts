@@ -27,7 +27,6 @@ export const navigationByRole: Record<AppRole, NavigationItem[]> = {
   business_analyst: [
     { href: "/business-analyst/dashboard", label: "Dashboard", icon: Home },
     { href: "/business-analyst/profile", label: "Profile", icon: UserRound },
-    { href: "/business-analyst/projects", label: "Projects", icon: FolderKanban },
-    { href: "/business-analyst/projects", label: "Vision & Scope", icon: FileText },
+    { href: "/business-analyst/project", label: "Projects", icon: FolderKanban },
   ],
 }
