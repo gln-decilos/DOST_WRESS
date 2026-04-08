@@ -16,6 +16,7 @@ def create_app():
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False
 
+    # CORS
     CORS(
         app,
         supports_credentials=True,
@@ -24,7 +25,9 @@ def create_app():
                 "origins": [
                     "http://127.0.0.1:3000",
                     "http://localhost:3000",
-                ]
+                ],
+                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
             }
         },
     )
@@ -35,25 +38,41 @@ def create_app():
 
     # MODELS
     from app.models.organization import Organization
-    from app.models.role import Role
-    from app.models.user import User
-    from app.models.user_roles import UserRole
     from app.models.organization_member import OrganizationMember
     from app.models.project import Project
+    from app.models.user import User
+    from app.models.role import Role
+    from app.models.permission import Permission
+    from app.models.user_roles import UserRole
+    from app.models.role_permissions import RolePermission
 
     # ROUTES
     from app.routes.auth_routes import auth_bp
     from app.routes.admin_routes import admin_bp
     from app.routes.organization_routes import organization_bp
-    from app.routes.role_routes import role_bp
     from app.routes.user_routes import user_bp
+    from app.routes.role_routes import role_bp
+    from app.routes.permission_routes import permission_bp
+    from app.routes.access_routes import access_bp
     from app.routes.business_analyst.project_routes import business_project_bp
 
+    # BLUEPRINT REGISTRATION
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
-    app.register_blueprint(organization_bp, url_prefix="/api/admin")
-    app.register_blueprint(role_bp, url_prefix="/api/admin")
-    app.register_blueprint(user_bp, url_prefix="/api/admin")
+    app.register_blueprint(organization_bp, url_prefix="/api/admin/organizations")
+    app.register_blueprint(user_bp, url_prefix="/api/admin/users")
+    app.register_blueprint(role_bp, url_prefix="/api/admin/roles")
+    app.register_blueprint(permission_bp, url_prefix="/api/admin/permissions")
+    app.register_blueprint(access_bp, url_prefix="/api/access")
     app.register_blueprint(business_project_bp, url_prefix="/api/business-analyst")
+
+    # DEBUG: PRINT REGISTERED ROUTES
+    print("\n=== REGISTERED ROUTES ===")
+    for rule in app.url_map.iter_rules():
+        methods = ",".join(
+            sorted(method for method in rule.methods if method not in {"HEAD", "OPTIONS"})
+        )
+        print(f"{rule.rule:50s} -> {rule.endpoint:35s} [{methods}]")
+    print("=== END ROUTES ===\n")
 
     return app

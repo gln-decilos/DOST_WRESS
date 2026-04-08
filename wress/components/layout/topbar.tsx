@@ -34,6 +34,7 @@ type AuthUser = {
 }
 
 const API_BASE_URL = "http://localhost:5000/api/auth"
+
 export function Topbar({ onMenuClick }: TopbarProps) {
   const router = useRouter()
   const [q, setQ] = useState("")
@@ -71,13 +72,8 @@ export function Topbar({ onMenuClick }: TopbarProps) {
   const profileHref = useMemo(() => {
     const roleNames = user?.roles?.map((role) => role.name) || []
 
-    if (roleNames.includes("Administrator")) {
-      return "/admin/profile"
-    }
-
-    if (roleNames.includes("Business Analyst")) {
-      return "/business-analyst/profile"
-    }
+    if (roleNames.includes("Administrator")) return "/admin/profile"
+    if (roleNames.includes("Business Analyst")) return "/business-analyst/profile"
 
     return "/profile"
   }, [user])
@@ -89,10 +85,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
         credentials: "include",
       })
 
-      if (!response.ok) {
-        console.error("Logout failed")
-        return
-      }
+      if (!response.ok) return
 
       router.push("/signin")
       router.refresh()
@@ -102,17 +95,17 @@ export function Topbar({ onMenuClick }: TopbarProps) {
   }
 
   return (
-    <header className="lg:-mx-7 sticky top-0 z-30 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border mb-6 rounded-xl lg:rounded-none">
-      <div className="h-16 px-4 md:px-7 flex items-center justify-between gap-3">
+    <header className="sticky top-0 z-30 mb-6 rounded-xl border-b border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 lg:-mx-7 lg:rounded-none">
+      <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-7">
         <button
           onClick={onMenuClick}
-          className="lg:hidden rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2"
+          className="rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2 lg:hidden"
           aria-label="Open menu"
         >
           <Menu className="size-5" />
         </button>
 
-        <div className="flex-1 max-w-xl">
+        <div className="max-w-xl flex-1">
           <label className="relative block">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
               <Search className="size-4" />
@@ -121,7 +114,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search here"
-              className="w-full rounded-full border bg-background pl-9 pr-3 py-2 text-sm"
+              className="w-full rounded-full border bg-background py-2 pl-9 pr-3 text-sm"
               aria-label="Search"
             />
           </label>
@@ -132,7 +125,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
             <DropdownMenuTrigger className="relative rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2">
               <Bell className="size-5" aria-hidden />
               <span className="sr-only">Open notifications</span>
-              <span className="absolute right-1 top-1 inline-flex items-center justify-center text-[10px] bg-red-500 text-white rounded-full h-4 min-w-4 px-1">
+              <span className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">
                 3
               </span>
             </DropdownMenuTrigger>
@@ -192,7 +185,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={handleLogout}
-                className="text-destructive flex items-center gap-2"
+                className="flex items-center gap-2 text-destructive"
               >
                 <LogOut className="size-4" />
                 Sign out

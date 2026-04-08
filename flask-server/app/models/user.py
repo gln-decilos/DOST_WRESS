@@ -48,6 +48,24 @@ class User(db.Model):
     def roles(self):
         return [user_role.role for user_role in self.user_roles]
 
+    @property
+    def permissions(self):
+        permission_map = {}
+
+        for role in self.roles:
+            for role_permission in role.role_permissions:
+                permission = role_permission.permission
+                permission_map[permission.key] = permission
+
+        return list(permission_map.values())
+
+    @property
+    def permission_keys(self):
+        return sorted([permission.key for permission in self.permissions])
+
+    def has_permission(self, permission_key):
+        return permission_key in self.permission_keys
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -64,9 +82,20 @@ class User(db.Model):
             "roles": [
                 {
                     "id": role.id,
-                    "name": role.name
+                    "name": role.name,
+                    "description": role.description
                 } for role in self.roles
             ],
+            "permissions": [
+                {
+                    "id": permission.id,
+                    "key": permission.key,
+                    "label": permission.label,
+                    "module": permission.module,
+                    "description": permission.description
+                } for permission in self.permissions
+            ],
+            "permission_keys": self.permission_keys,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

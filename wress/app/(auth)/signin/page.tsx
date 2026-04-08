@@ -30,7 +30,7 @@ export default function SignInPage() {
   const getRedirectPathByRole = (roles: UserRole[]) => {
     const roleNames = roles.map((role) => role.name)
 
-    if (roleNames.includes("Administrator")) {
+    if (roleNames.includes("System Admin")) {
       return "/admin/dashboard"
     }
 

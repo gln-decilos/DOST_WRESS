@@ -5,23 +5,25 @@ from app.models.organization import Organization
 organization_bp = Blueprint("organization", __name__)
 
 
-@organization_bp.route("/organizations", methods=["GET"])
+@organization_bp.route("", methods=["GET", "OPTIONS"], strict_slashes=False)
+@organization_bp.route("/", methods=["GET", "OPTIONS"], strict_slashes=False)
 def get_organizations():
     organizations = Organization.query.order_by(Organization.id.asc()).all()
     return jsonify([org.to_dict() for org in organizations]), 200
 
 
-@organization_bp.route("/organizations/<int:org_id>", methods=["GET"])
+@organization_bp.route("/<int:org_id>", methods=["GET", "OPTIONS"], strict_slashes=False)
 def get_organization(org_id):
     organization = Organization.query.get(org_id)
 
     if not organization:
-        return jsonify({"message": "Organization not found"}), 404
+      return jsonify({"message": "Organization not found"}), 404
 
     return jsonify(organization.to_dict()), 200
 
 
-@organization_bp.route("/organizations", methods=["POST"])
+@organization_bp.route("", methods=["POST", "OPTIONS"], strict_slashes=False)
+@organization_bp.route("/", methods=["POST", "OPTIONS"], strict_slashes=False)
 def create_organization():
     data = request.get_json()
 
@@ -56,7 +58,7 @@ def create_organization():
     }), 201
 
 
-@organization_bp.route("/organizations/<int:org_id>", methods=["PUT"])
+@organization_bp.route("/<int:org_id>", methods=["PUT", "OPTIONS"], strict_slashes=False)
 def update_organization(org_id):
     organization = Organization.query.get(org_id)
 
@@ -91,7 +93,8 @@ def update_organization(org_id):
         "organization": organization.to_dict()
     }), 200
 
-@organization_bp.route("/organizations/<int:org_id>", methods=["DELETE"])
+
+@organization_bp.route("/<int:org_id>", methods=["DELETE", "OPTIONS"], strict_slashes=False)
 def delete_organization(org_id):
     organization = Organization.query.get(org_id)
 
@@ -104,5 +107,3 @@ def delete_organization(org_id):
     return jsonify({
         "message": "Organization deleted successfully"
     }), 200
-
-

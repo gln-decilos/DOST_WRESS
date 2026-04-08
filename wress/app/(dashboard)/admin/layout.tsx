@@ -2,8 +2,8 @@
 
 import type React from "react"
 import { useState } from "react"
-import { Sidebar } from "@/components/partials/admin-sidebar"
-import { Topbar } from "@/components/topbar"
+import AppSidebar from "@/components/layout/app-sidebar"
+import { Topbar } from "@/components/layout/topbar"
 
 export default function AdminLayout({
   children,
@@ -15,10 +15,10 @@ export default function AdminLayout({
   return (
     <div className="bg-background">
       <div className="mx-auto px-2 py-3 sm:px-4 sm:py-6">
-        <div className="rounded-3xl bg-card shadow-sm ring-1 ring-border overflow-hidden">
+        <div className="overflow-hidden rounded-3xl bg-card shadow-sm ring-1 ring-border">
           {sidebarOpen && (
             <div
-              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+              className="fixed inset-0 z-40 bg-black/50 lg:hidden"
               onClick={() => setSidebarOpen(false)}
             />
           )}
@@ -31,10 +31,10 @@ export default function AdminLayout({
                 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
               `}
             >
-              <Sidebar />
+              <AppSidebar role="admin" />
             </div>
 
-            <main className="flex-1 w-full lg:w-auto rounded-b-3xl lg:rounded-r-3xl lg:rounded-bl-none bg-muted p-3 sm:p-5 md:px-7 md:py-7 xl:pb-7 xl:pt-0 overflow-auto">
+            <main className="flex-1 w-full overflow-auto rounded-b-3xl bg-muted p-3 sm:p-5 md:px-7 md:py-7 lg:w-auto lg:rounded-r-3xl lg:rounded-bl-none xl:pb-7 xl:pt-0">
               <Topbar onMenuClick={() => setSidebarOpen(true)} />
               {children}
               <p className="mt-2 bottom-0">© All rights reserved by WRESS 2026.</p>
