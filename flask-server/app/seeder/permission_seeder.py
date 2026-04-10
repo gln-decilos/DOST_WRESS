@@ -141,6 +141,32 @@ PERMISSIONS = [
         "description": "Allows user to delete vision and scope documents.",
     },
 
+    # Templates
+    {
+        "key": "templates.view",
+        "label": "View Templates",
+        "module": "templates",
+        "description": "Allows user to view document templates.",
+    },
+    {
+        "key": "templates.create",
+        "label": "Create Templates",
+        "module": "templates",
+        "description": "Allows user to create document templates.",
+    },
+    {
+        "key": "templates.edit",
+        "label": "Edit Templates",
+        "module": "templates",
+        "description": "Allows user to edit document templates.",
+    },
+    {
+        "key": "templates.delete",
+        "label": "Delete Templates",
+        "module": "templates",
+        "description": "Allows user to delete document templates.",
+    },
+
     # Requirements
     {
         "key": "requirements.view",
@@ -193,6 +219,6 @@ def seed_permissions():
 
     db.session.commit()
 
-    print(f"Permissions seeded successfully.")
+    print("Permissions seeded successfully.")
     print(f"Created: {created_count}")
     print(f"Skipped: {skipped_count}")

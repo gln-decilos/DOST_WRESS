@@ -45,6 +45,11 @@ def create_app():
     from app.models.permission import Permission
     from app.models.user_roles import UserRole
     from app.models.role_permissions import RolePermission
+    from app.models.document_templates import DocumentTemplate
+    from app.models.document_template_section import DocumentTemplateSection
+    from app.models.document_template_field import DocumentTemplateField
+    from app.models.project_document import ProjectDocument
+    from app.models.project_document_value import ProjectDocumentValue
 
     # ROUTES
     from app.routes.auth_routes import auth_bp
@@ -55,6 +60,13 @@ def create_app():
     from app.routes.permission_routes import permission_bp
     from app.routes.access_routes import access_bp
     from app.routes.business_analyst.project_routes import business_project_bp
+    from app.routes.template_routes import template_bp
+    from app.routes.vision_scope_routes import vision_scope_bp
+
+    # NEW ADMIN TEMPLATE ROUTES
+    from app.routes.admin_template_routes import admin_template_bp
+    from app.routes.admin_template_section_routes import admin_template_section_bp
+    from app.routes.admin_template_field_routes import admin_template_field_bp
 
     # BLUEPRINT REGISTRATION
     app.register_blueprint(auth_bp)
@@ -65,6 +77,13 @@ def create_app():
     app.register_blueprint(permission_bp, url_prefix="/api/admin/permissions")
     app.register_blueprint(access_bp, url_prefix="/api/access")
     app.register_blueprint(business_project_bp, url_prefix="/api/business-analyst")
+    app.register_blueprint(template_bp, url_prefix="/api/templates")
+    app.register_blueprint(vision_scope_bp, url_prefix="/api/business-analyst")
+
+    # NEW ADMIN TEMPLATE BLUEPRINTS
+    app.register_blueprint(admin_template_bp)
+    app.register_blueprint(admin_template_section_bp)
+    app.register_blueprint(admin_template_field_bp)
 
     # DEBUG: PRINT REGISTERED ROUTES
     print("\n=== REGISTERED ROUTES ===")

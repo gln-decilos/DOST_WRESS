@@ -2,17 +2,20 @@ from flask import Blueprint, jsonify, request
 from datetime import datetime
 from app.extensions import db
 from app.models.project import Project
+from app.utils.permissions import require_permission
 
 business_project_bp = Blueprint("business_project_bp", __name__)
 
 
 @business_project_bp.route("/projects", methods=["GET"])
+@require_permission("project.view")
 def get_projects():
     projects = Project.query.order_by(Project.created_at.desc()).all()
     return jsonify([project.to_dict() for project in projects]), 200
 
 
 @business_project_bp.route("/projects", methods=["POST"])
+@require_permission("project.create")
 def create_project():
     data = request.get_json() or {}
 
@@ -62,6 +65,7 @@ def create_project():
 
 
 @business_project_bp.route("/project/<int:project_id>/archive", methods=["PATCH"])
+@require_permission("project.edit")
 def archive_project(project_id):
     project = Project.query.get(project_id)
 
@@ -78,6 +82,7 @@ def archive_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>/unarchive", methods=["PATCH"])
+@require_permission("project.edit")
 def unarchive_project(project_id):
     project = Project.query.get(project_id)
 
@@ -94,6 +99,7 @@ def unarchive_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>", methods=["DELETE"])
+@require_permission("project.delete")
 def delete_project(project_id):
     project = Project.query.get(project_id)
 
@@ -106,8 +112,8 @@ def delete_project(project_id):
     return jsonify({"message": "Project deleted successfully"}), 200
 
 
-
 @business_project_bp.route("/project/<int:project_id>", methods=["GET"])
+@require_permission("project.view")
 def get_project(project_id):
     project = Project.query.get(project_id)
 
@@ -118,6 +124,7 @@ def get_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>", methods=["PUT"])
+@require_permission("project.edit")
 def update_project(project_id):
     project = Project.query.get(project_id)
 
@@ -133,7 +140,7 @@ def update_project(project_id):
     end_date = data.get("end_date")
 
     if not name:
-      return jsonify({"message": "Project title is required"}), 400
+        return jsonify({"message": "Project title is required"}), 400
 
     parsed_start_date = None
     parsed_end_date = None

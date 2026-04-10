@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Archive, Eye, RotateCcw, Trash2 } from "lucide-react"
+import usePermissions from "@/features/access/use-permissions"
 
 type Project = {
   id: number
@@ -66,6 +67,12 @@ function getStatusClasses(status: string) {
 
 export default function ProjectsPageView() {
   const router = useRouter()
+  const { loading: permissionsLoading, hasPermission } = usePermissions()
+
+  const canViewProjects = hasPermission("project.view")
+  const canCreateProjects = hasPermission("project.create")
+  const canEditProjects = hasPermission("project.edit")
+  const canDeleteProjects = hasPermission("project.delete")
 
   const [projects, setProjects] = useState<Project[]>([])
   const [currentPage, setCurrentPage] = useState(1)
@@ -137,9 +144,13 @@ export default function ProjectsPageView() {
   }
 
   useEffect(() => {
-    fetchCurrentUser()
-    fetchProjects()
-  }, [])
+    if (!permissionsLoading && canViewProjects) {
+      fetchCurrentUser()
+      fetchProjects()
+    } else if (!permissionsLoading && !canViewProjects) {
+      setFetching(false)
+    }
+  }, [permissionsLoading, canViewProjects])
 
   const filteredProjects = useMemo(() => {
     if (activeView === "projects") {
@@ -158,6 +169,7 @@ export default function ProjectsPageView() {
   }, [filteredProjects, currentPage])
 
   const openCreateModal = () => {
+    if (!canCreateProjects) return
     setProjectForm(emptyProject)
     setMessage("")
     setIsCreateModalOpen(true)
@@ -170,6 +182,7 @@ export default function ProjectsPageView() {
   }
 
   const openDeleteModal = (project: Project) => {
+    if (!canDeleteProjects) return
     setSelectedProject(project)
     setMessage("")
     setIsDeleteModalOpen(true)
@@ -181,6 +194,7 @@ export default function ProjectsPageView() {
   }
 
   const openArchiveModal = (project: Project) => {
+    if (!canEditProjects) return
     setSelectedProject(project)
     setMessage("")
     setIsArchiveModalOpen(true)
@@ -346,6 +360,26 @@ export default function ProjectsPageView() {
     }
   }
 
+  if (permissionsLoading) {
+    return (
+      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
+        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
+          Loading permissions...
+        </div>
+      </section>
+    )
+  }
+
+  if (!canViewProjects) {
+    return (
+      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
+        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
+          You do not have permission to view projects.
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -373,12 +407,14 @@ export default function ProjectsPageView() {
                 Archived Projects
               </button>
 
-              <button
-                onClick={openCreateModal}
-                className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-              >
-                Create Project
-              </button>
+              {canCreateProjects && (
+                <button
+                  onClick={openCreateModal}
+                  className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+                >
+                  Create Project
+                </button>
+              )}
             </>
           ) : (
             <button
@@ -448,40 +484,45 @@ export default function ProjectsPageView() {
                 <div className="mt-5 flex items-center justify-end gap-2">
                   <button
                     onClick={() =>
-                        router.push(`/business-analyst/project/${project.id}`)                    }
+                      router.push(`/business-analyst/project/${project.id}`)
+                    }
                     className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border text-foreground hover:bg-muted"
                     title="View Project"
                   >
                     <Eye className="h-4 w-4" />
                   </button>
 
-                  <button
-                    onClick={() => openArchiveModal(project)}
-                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border ${
-                      project.status === "Archived"
-                        ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-                        : "border-border text-foreground hover:bg-muted"
-                    }`}
-                    title={
-                      project.status === "Archived"
-                        ? "Unarchive Project"
-                        : "Archive Project"
-                    }
-                  >
-                    {project.status === "Archived" ? (
-                      <RotateCcw className="h-4 w-4" />
-                    ) : (
-                      <Archive className="h-4 w-4" />
-                    )}
-                  </button>
+                  {canEditProjects && (
+                    <button
+                      onClick={() => openArchiveModal(project)}
+                      className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border ${
+                        project.status === "Archived"
+                          ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                          : "border-border text-foreground hover:bg-muted"
+                      }`}
+                      title={
+                        project.status === "Archived"
+                          ? "Unarchive Project"
+                          : "Archive Project"
+                      }
+                    >
+                      {project.status === "Archived" ? (
+                        <RotateCcw className="h-4 w-4" />
+                      ) : (
+                        <Archive className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
 
-                  <button
-                    onClick={() => openDeleteModal(project)}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
-                    title="Delete Project"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDeleteProjects && (
+                    <button
+                      onClick={() => openDeleteModal(project)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                      title="Delete Project"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -532,7 +573,7 @@ export default function ProjectsPageView() {
         </>
       )}
 
-      {isCreateModalOpen && (
+      {isCreateModalOpen && canCreateProjects && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <div className="mb-4 flex items-center justify-between">
@@ -642,7 +683,7 @@ export default function ProjectsPageView() {
         </div>
       )}
 
-      {isArchiveModalOpen && selectedProject && (
+      {isArchiveModalOpen && selectedProject && canEditProjects && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
@@ -704,7 +745,7 @@ export default function ProjectsPageView() {
         </div>
       )}
 
-      {isDeleteModalOpen && selectedProject && (
+      {isDeleteModalOpen && selectedProject && canDeleteProjects && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">

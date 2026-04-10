@@ -10,6 +10,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react"
+import usePermissions from "@/features/access/use-permissions"
 
 type Project = {
   id: number
@@ -32,46 +33,65 @@ type ProjectForm = {
   status: string
 }
 
-type VisionScopeDocument = {
+type TemplateField = {
   id: number
-  version: string
-  background: string
-  business_opportunity: string
-  business_objectives: string
-  success_metrics: string
-  project_vision_statement: string
-  scope_and_limitations: string
-  stakeholders_profile: string
-  business_context: string
-  created_at: string
-  updated_at: string
+  section_id: number
+  key: string
+  label: string
+  field_type: string
+  placeholder?: string | null
+  help_text?: string | null
+  default_value?: string | null
+  options_json?: string | null
+  is_required: boolean
+  sort_order: number
 }
 
-type VisionScopeForm = {
+type TemplateSection = {
+  id: number
+  template_id: number
+  title: string
+  description?: string | null
+  sort_order: number
+  is_collapsible: boolean
+  fields: TemplateField[]
+}
+
+type DocumentTemplate = {
+  id: number
+  name: string
+  code: string
+  module: string
+  description?: string | null
+  is_active: boolean
+  is_default: boolean
+  organization_id?: number | null
+  sections: TemplateSection[]
+}
+
+type ProjectDocumentValue = {
+  id: number
+  document_id: number
+  template_field_id: number
+  value_text: string
+  created_at?: string
+  updated_at?: string
+}
+
+type VisionScopeDocument = {
+  id: number
+  project_id: number
+  template_id: number
   version: string
-  background: string
-  business_opportunity: string
-  business_objectives: string
-  success_metrics: string
-  project_vision_statement: string
-  scope_and_limitations: string
-  stakeholders_profile: string
-  business_context: string
+  status: string
+  created_by?: number | null
+  created_at: string
+  updated_at: string
+  values?: ProjectDocumentValue[]
 }
 
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
-
-const emptyVisionScopeForm: VisionScopeForm = {
-  version: "",
-  background: "",
-  business_opportunity: "",
-  business_objectives: "",
-  success_metrics: "",
-  project_vision_statement: "",
-  scope_and_limitations: "",
-  stakeholders_profile: "",
-  business_context: "",
-}
+const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
 function getStatusClasses(status: string) {
   switch (status) {
@@ -93,6 +113,15 @@ export default function ProjectDetailsPageView() {
   const router = useRouter()
   const projectId = params.id
 
+  const { loading: permissionsLoading, hasPermission } = usePermissions()
+
+  const canViewProject = hasPermission("project.view")
+  const canEditProject = hasPermission("project.edit")
+  const canViewVisionScope = hasPermission("vision_scope.view")
+  const canCreateVisionScope = hasPermission("vision_scope.create")
+  const canEditVisionScope = hasPermission("vision_scope.edit")
+  const canDeleteVisionScope = hasPermission("vision_scope.delete")
+
   const [project, setProject] = useState<Project | null>(null)
   const [fetching, setFetching] = useState(true)
   const [loading, setLoading] = useState(false)
@@ -110,24 +139,55 @@ export default function ProjectDetailsPageView() {
     status: "Pending",
   })
 
+  const [template, setTemplate] = useState<DocumentTemplate | null>(null)
+  const [templateLoading, setTemplateLoading] = useState(false)
+
   const [visionScopeDocuments, setVisionScopeDocuments] = useState<
     VisionScopeDocument[]
   >([])
-  const [selectedVisionScopeIds, setSelectedVisionScopeIds] = useState<number[]>(
-    []
-  )
+  const [selectedVisionScopeIds, setSelectedVisionScopeIds] = useState<number[]>([])
   const [visionScopeToDelete, setVisionScopeToDelete] =
     useState<VisionScopeDocument | null>(null)
 
   const [isVisionScopeFormOpen, setIsVisionScopeFormOpen] = useState(false)
-  const [visionScopeForm, setVisionScopeForm] =
-    useState<VisionScopeForm>(emptyVisionScopeForm)
 
-  const [openSections, setOpenSections] = useState({
-    businessRequirements: true,
-    scopeAndLimitations: true,
-    businessContext: true,
-  })
+  const [visionScopeVersion, setVisionScopeVersion] = useState("")
+  const [visionScopeValues, setVisionScopeValues] = useState<Record<string, string>>({})
+  const [editingVisionScope, setEditingVisionScope] =
+    useState<VisionScopeDocument | null>(null)
+
+  const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
+
+  const getFieldValueFromDocument = (
+    document: VisionScopeDocument,
+    fieldId: number
+  ) => {
+    const value = document.values?.find((item) => item.template_field_id === fieldId)
+    return value?.value_text || ""
+  }
+
+  const buildVisionScopeValuesFromDocument = (document: VisionScopeDocument) => {
+    const values: Record<string, string> = {}
+
+    if (!template) return values
+
+    template.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        values[field.key] = getFieldValueFromDocument(document, field.id)
+      })
+    })
+
+    return values
+  }
+
+  const resetOpenSections = () => {
+    if (!template) return
+    const initialOpenSections: Record<number, boolean> = {}
+    template.sections.forEach((section) => {
+      initialOpenSections[section.id] = true
+    })
+    setOpenSections(initialOpenSections)
+  }
 
   const fetchProject = async () => {
     try {
@@ -162,11 +222,73 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  useEffect(() => {
-    if (projectId) {
-      fetchProject()
+  const fetchVisionScopeTemplate = async () => {
+    try {
+      setTemplateLoading(true)
+
+      const res = await fetch(`${TEMPLATE_API_BASE_URL}/vision_scope/default`, {
+        method: "GET",
+        credentials: "include",
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to fetch Vision & Scope template")
+        return
+      }
+
+      const fetchedTemplate: DocumentTemplate = data.template
+      setTemplate(fetchedTemplate)
+
+      const initialOpenSections: Record<number, boolean> = {}
+      fetchedTemplate.sections.forEach((section) => {
+        initialOpenSections[section.id] = true
+      })
+      setOpenSections(initialOpenSections)
+    } catch (error) {
+      console.error("Failed to fetch Vision & Scope template:", error)
+      setMessage("Failed to fetch Vision & Scope template")
+    } finally {
+      setTemplateLoading(false)
     }
-  }, [projectId])
+  }
+
+  const fetchVisionScopeDocuments = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+        method: "GET",
+        credentials: "include",
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to fetch Vision & Scope documents")
+        return
+      }
+
+      setVisionScopeDocuments(data.documents || [])
+    } catch (error) {
+      console.error("Failed to fetch Vision & Scope documents:", error)
+      setMessage("Failed to fetch Vision & Scope documents")
+    }
+  }
+
+  useEffect(() => {
+    if (!permissionsLoading && canViewProject && projectId) {
+      fetchProject()
+    } else if (!permissionsLoading && !canViewProject) {
+      setFetching(false)
+    }
+  }, [permissionsLoading, canViewProject, projectId])
+
+  useEffect(() => {
+    if (!permissionsLoading && canViewVisionScope && projectId) {
+      fetchVisionScopeTemplate()
+      fetchVisionScopeDocuments()
+    }
+  }, [permissionsLoading, canViewVisionScope, projectId])
 
   const handleProjectChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -178,13 +300,10 @@ export default function ProjectDetailsPageView() {
     }))
   }
 
-  const handleVisionScopeChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
-    const { name, value } = e.target
-    setVisionScopeForm((prev) => ({
+  const handleDynamicVisionScopeChange = (fieldKey: string, value: string) => {
+    setVisionScopeValues((prev) => ({
       ...prev,
-      [name]: value,
+      [fieldKey]: value,
     }))
   }
 
@@ -228,50 +347,101 @@ export default function ProjectDetailsPageView() {
   }
 
   const openCreateVisionScopeForm = () => {
-    setVisionScopeForm(emptyVisionScopeForm)
-    setIsVisionScopeFormOpen(true)
-    setOpenSections({
-      businessRequirements: true,
-      scopeAndLimitations: true,
-      businessContext: true,
+    if (!canCreateVisionScope || !template) return
+
+    const initialValues: Record<string, string> = {}
+
+    template.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        initialValues[field.key] = field.default_value || ""
+      })
     })
+
+    setEditingVisionScope(null)
+    setVisionScopeValues(initialValues)
+    setVisionScopeVersion(`v${visionScopeDocuments.length + 1}.0`)
+    setIsVisionScopeFormOpen(true)
+    resetOpenSections()
+    setMessage("")
+  }
+
+  const openEditVisionScopeForm = (document: VisionScopeDocument) => {
+    if (!canEditVisionScope || !template) return
+
+    setEditingVisionScope(document)
+    setVisionScopeVersion(document.version)
+    setVisionScopeValues(buildVisionScopeValuesFromDocument(document))
+    setIsVisionScopeFormOpen(true)
+    resetOpenSections()
     setMessage("")
   }
 
   const closeCreateVisionScopeForm = () => {
-    setVisionScopeForm(emptyVisionScopeForm)
+    setVisionScopeVersion("")
+    setVisionScopeValues({})
+    setEditingVisionScope(null)
     setIsVisionScopeFormOpen(false)
   }
 
-  const handleCreateVisionScope = (e: React.FormEvent) => {
+  const handleCreateOrUpdateVisionScope = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!template) {
+      setMessage("Template not found")
+      return
+    }
+
     setLoading(true)
     setMessage("")
 
     try {
-      const now = new Date().toISOString()
+      const valuesPayload = template.sections.flatMap((section) =>
+        section.fields.map((field) => ({
+          template_field_id: field.id,
+          value_text: visionScopeValues[field.key] || "",
+        }))
+      )
 
-      const newDocument: VisionScopeDocument = {
-        id: Date.now(),
-        version: visionScopeForm.version || `v${visionScopeDocuments.length + 1}.0`,
-        background: visionScopeForm.background,
-        business_opportunity: visionScopeForm.business_opportunity,
-        business_objectives: visionScopeForm.business_objectives,
-        success_metrics: visionScopeForm.success_metrics,
-        project_vision_statement: visionScopeForm.project_vision_statement,
-        scope_and_limitations: visionScopeForm.scope_and_limitations,
-        stakeholders_profile: visionScopeForm.stakeholders_profile,
-        business_context: visionScopeForm.business_context,
-        created_at: now,
-        updated_at: now,
+      const isEditing = Boolean(editingVisionScope)
+
+      const url = isEditing
+        ? `${API_BASE_URL}/project/${projectId}/documents/${editingVisionScope?.id}`
+        : `${API_BASE_URL}/project/${projectId}/documents`
+
+      const method = isEditing ? "PUT" : "POST"
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          template_id: template.id,
+          version: visionScopeVersion || `v${visionScopeDocuments.length + 1}.0`,
+          values: valuesPayload,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(
+          data.message ||
+            `Failed to ${isEditing ? "update" : "create"} Vision & Scope document`
+        )
+        return
       }
 
-      setVisionScopeDocuments((prev) => [newDocument, ...prev])
-      setMessage("Vision & Scope document created successfully")
+      setMessage(
+        data.message ||
+          `Vision & Scope document ${isEditing ? "updated" : "created"} successfully`
+      )
       closeCreateVisionScopeForm()
+      await fetchVisionScopeDocuments()
     } catch (error) {
-      console.error("Failed to create vision & scope:", error)
-      setMessage("Failed to create vision & scope")
+      console.error("Failed to save vision & scope:", error)
+      setMessage("Failed to save vision & scope")
     } finally {
       setLoading(false)
     }
@@ -295,25 +465,46 @@ export default function ProjectDetailsPageView() {
     setSelectedVisionScopeIds(visionScopeDocuments.map((doc) => doc.id))
   }
 
-  const confirmDeleteVisionScope = () => {
+  const confirmDeleteVisionScope = async () => {
     if (!visionScopeToDelete) return
 
-    setVisionScopeDocuments((prev) =>
-      prev.filter((doc) => doc.id !== visionScopeToDelete.id)
-    )
-    setSelectedVisionScopeIds((prev) =>
-      prev.filter((id) => id !== visionScopeToDelete.id)
-    )
-    setVisionScopeToDelete(null)
-    setMessage("Vision & Scope document deleted successfully")
+    try {
+      setLoading(true)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/documents/${visionScopeToDelete.id}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to delete Vision & Scope document")
+        return
+      }
+
+      const deletedId = visionScopeToDelete.id
+
+      setVisionScopeToDelete(null)
+      setSelectedVisionScopeIds((prev) => prev.filter((id) => id !== deletedId))
+      setMessage(data.message || "Vision & Scope document deleted successfully")
+      await fetchVisionScopeDocuments()
+    } catch (error) {
+      console.error("Failed to delete vision & scope:", error)
+      setMessage("Failed to delete vision & scope")
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const toggleSection = (
-    section: "businessRequirements" | "scopeAndLimitations" | "businessContext"
-  ) => {
+  const toggleSection = (sectionId: number) => {
     setOpenSections((prev) => ({
       ...prev,
-      [section]: !prev[section],
+      [sectionId]: !prev[sectionId],
     }))
   }
 
@@ -326,6 +517,26 @@ export default function ProjectDetailsPageView() {
         ? "bg-primary text-primary-foreground"
         : "border border-border text-foreground hover:bg-muted"
     }`
+
+  if (permissionsLoading) {
+    return (
+      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
+        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
+          Loading permissions...
+        </div>
+      </section>
+    )
+  }
+
+  if (!canViewProject) {
+    return (
+      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
+        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
+          You do not have permission to view this project.
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
@@ -401,7 +612,7 @@ export default function ProjectDetailsPageView() {
               </p>
             </div>
 
-            {!isEditMode && (
+            {!isEditMode && canEditProject && (
               <button
                 onClick={() => setIsEditMode(true)}
                 className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
@@ -559,345 +770,263 @@ export default function ProjectDetailsPageView() {
           </p>
         </div>
       ) : activeTab === "vision-scope" ? (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Vision & Scope</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Define the business direction before building requirements.
-              </p>
-            </div>
-
-            {!isVisionScopeFormOpen && (
-              <button
-                onClick={openCreateVisionScopeForm}
-                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-              >
-                Create Vision & Scope
-              </button>
-            )}
+        !canViewVisionScope ? (
+          <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
+            <h2 className="text-xl font-semibold text-foreground">Vision & Scope</h2>
+            <p className="mt-2 text-muted-foreground">
+              You do not have permission to view vision and scope documents.
+            </p>
           </div>
-
-          {isVisionScopeFormOpen && (
-            <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-foreground">
-                    Create Vision & Scope
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Fill in the sections below to define the project direction.
-                  </p>
-                </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">Vision & Scope</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Define the business direction before building requirements.
+                </p>
               </div>
 
-              <form onSubmit={handleCreateVisionScope} className="space-y-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
-                    Version
-                  </label>
-                  <input
-                    type="text"
-                    name="version"
-                    value={visionScopeForm.version}
-                    onChange={handleVisionScopeChange}
-                    placeholder="e.g. v1.0"
-                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                  />
-                </div>
-
-                <div className="rounded-xl border border-border">
-                  <button
-                    type="button"
-                    onClick={() => toggleSection("businessRequirements")}
-                    className="flex w-full items-center justify-between px-4 py-3 text-left"
-                  >
-                    <div>
-                      <p className="font-medium text-foreground">
-                        1. Business Requirements
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        1.1 to 1.5
-                      </p>
-                    </div>
-                    <SectionToggleIcon isOpen={openSections.businessRequirements} />
-                  </button>
-
-                  {openSections.businessRequirements && (
-                    <div className="space-y-4 border-t border-border px-4 py-4">
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          1.1 Background
-                        </label>
-                        <textarea
-                          name="background"
-                          value={visionScopeForm.background}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          1.2 Business Opportunity
-                        </label>
-                        <textarea
-                          name="business_opportunity"
-                          value={visionScopeForm.business_opportunity}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          1.3 Business Objectives
-                        </label>
-                        <textarea
-                          name="business_objectives"
-                          value={visionScopeForm.business_objectives}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          1.4 Success Metrics with Target Values
-                        </label>
-                        <textarea
-                          name="success_metrics"
-                          value={visionScopeForm.success_metrics}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          1.5 Project Vision Statement
-                        </label>
-                        <textarea
-                          name="project_vision_statement"
-                          value={visionScopeForm.project_vision_statement}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-xl border border-border">
-                  <button
-                    type="button"
-                    onClick={() => toggleSection("scopeAndLimitations")}
-                    className="flex w-full items-center justify-between px-4 py-3 text-left"
-                  >
-                    <div>
-                      <p className="font-medium text-foreground">
-                        2. Scope and Limitations
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Includes stakeholders profile
-                      </p>
-                    </div>
-                    <SectionToggleIcon isOpen={openSections.scopeAndLimitations} />
-                  </button>
-
-                  {openSections.scopeAndLimitations && (
-                    <div className="space-y-4 border-t border-border px-4 py-4">
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          2. Scope and Limitations
-                        </label>
-                        <textarea
-                          name="scope_and_limitations"
-                          value={visionScopeForm.scope_and_limitations}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          2.1 Stakeholders Profile
-                        </label>
-                        <textarea
-                          name="stakeholders_profile"
-                          value={visionScopeForm.stakeholders_profile}
-                          onChange={handleVisionScopeChange}
-                          rows={4}
-                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-xl border border-border">
-                  <button
-                    type="button"
-                    onClick={() => toggleSection("businessContext")}
-                    className="flex w-full items-center justify-between px-4 py-3 text-left"
-                  >
-                    <div>
-                      <p className="font-medium text-foreground">
-                        3. Business Context
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Market, competitors, constraints
-                      </p>
-                    </div>
-                    <SectionToggleIcon isOpen={openSections.businessContext} />
-                  </button>
-
-                  {openSections.businessContext && (
-                    <div className="border-t border-border px-4 py-4">
-                      <label className="mb-1 block text-sm font-medium text-foreground">
-                        3. Business Context (market, competitors, constraints)
-                      </label>
-                      <textarea
-                        name="business_context"
-                        value={visionScopeForm.business_context}
-                        onChange={handleVisionScopeChange}
-                        rows={5}
-                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-                  >
-                    {loading ? "Saving..." : "Save Vision & Scope"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={closeCreateVisionScopeForm}
-                    className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+              {!isVisionScopeFormOpen && canCreateVisionScope && (
+                <button
+                  onClick={openCreateVisionScopeForm}
+                  disabled={!template || templateLoading}
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {templateLoading ? "Loading Template..." : "Create Vision & Scope"}
+                </button>
+              )}
             </div>
-          )}
 
-          {!isVisionScopeFormOpen && (
-            <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-muted/40 text-left text-foreground">
-                    <tr>
-                      <th className="w-14 px-4 py-3 font-medium">
-                        <input
-                          type="checkbox"
-                          checked={
-                            visionScopeDocuments.length > 0 &&
-                            selectedVisionScopeIds.length === visionScopeDocuments.length
-                          }
-                          onChange={toggleSelectAllVisionScopes}
-                        />
-                      </th>
-                      <th className="px-4 py-3 font-medium">Version</th>
-                      <th className="px-4 py-3 font-medium">Date Created</th>
-                      <th className="px-4 py-3 font-medium">Date Modified</th>
-                      <th className="w-40 px-4 py-3 font-medium">Actions</th>
-                    </tr>
-                  </thead>
+            {isVisionScopeFormOpen && template && (
+              <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-foreground">
+                      {editingVisionScope ? "Edit Vision & Scope" : "Create Vision & Scope"}
+                    </h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Fill in the sections below to define the project direction.
+                    </p>
+                  </div>
+                </div>
 
-                  <tbody>
-                    {visionScopeDocuments.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-4 py-10">
-                          <div className="flex flex-col items-center justify-center text-center">
-                            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                              <ClipboardList className="h-7 w-7 text-muted-foreground" />
-                            </div>
+                <form onSubmit={handleCreateOrUpdateVisionScope} className="space-y-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-foreground">
+                      Version
+                    </label>
+                    <input
+                      type="text"
+                      value={visionScopeVersion}
+                      onChange={(e) => setVisionScopeVersion(e.target.value)}
+                      placeholder="e.g. v1.0"
+                      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                    />
+                  </div>
 
-                            <h3 className="text-base font-semibold text-foreground">
-                              No Vision & Scope Document yet
-                            </h3>
-
-                            <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                              Start defining your project vision and scope to guide
-                              requirement development.
+                  {template.sections.map((section) => (
+                    <div key={section.id} className="rounded-xl border border-border">
+                      <button
+                        type="button"
+                        onClick={() => toggleSection(section.id)}
+                        className="flex w-full items-center justify-between px-4 py-3 text-left"
+                      >
+                        <div>
+                          <p className="font-medium text-foreground">{section.title}</p>
+                          {section.description && (
+                            <p className="text-sm text-muted-foreground">
+                              {section.description}
                             </p>
-                          </div>
-                        </td>
+                          )}
+                        </div>
+                        <SectionToggleIcon isOpen={openSections[section.id]} />
+                      </button>
+
+                      {openSections[section.id] && (
+                        <div className="space-y-4 border-t border-border px-4 py-4">
+                          {section.fields.map((field) => (
+                            <div key={field.id}>
+                              <label className="mb-1 block text-sm font-medium text-foreground">
+                                {field.label}
+                                {field.is_required && <span className="ml-1 text-red-500">*</span>}
+                              </label>
+
+                              {field.field_type === "textarea" ? (
+                                <textarea
+                                  value={visionScopeValues[field.key] || ""}
+                                  onChange={(e) =>
+                                    handleDynamicVisionScopeChange(field.key, e.target.value)
+                                  }
+                                  rows={4}
+                                  placeholder={field.placeholder || ""}
+                                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                                  required={field.is_required}
+                                />
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={visionScopeValues[field.key] || ""}
+                                  onChange={(e) =>
+                                    handleDynamicVisionScopeChange(field.key, e.target.value)
+                                  }
+                                  placeholder={field.placeholder || ""}
+                                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                                  required={field.is_required}
+                                />
+                              )}
+
+                              {field.help_text && (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {field.help_text}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                    >
+                      {loading
+                        ? "Saving..."
+                        : editingVisionScope
+                          ? "Update Vision & Scope"
+                          : "Save Vision & Scope"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={closeCreateVisionScopeForm}
+                      className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+                    >
+                      Back to Vision & Scope
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {!isVisionScopeFormOpen && (
+              <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-muted/40 text-left text-foreground">
+                      <tr>
+                        <th className="w-14 px-4 py-3 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={
+                              visionScopeDocuments.length > 0 &&
+                              selectedVisionScopeIds.length === visionScopeDocuments.length
+                            }
+                            onChange={toggleSelectAllVisionScopes}
+                          />
+                        </th>
+                        <th className="px-4 py-3 font-medium">Version</th>
+                        <th className="px-4 py-3 font-medium">Date Created</th>
+                        <th className="px-4 py-3 font-medium">Date Modified</th>
+                        <th className="w-40 px-4 py-3 font-medium">Actions</th>
                       </tr>
-                    ) : (
-                      visionScopeDocuments.map((document) => (
-                        <tr key={document.id} className="border-t border-border">
-                          <td className="px-4 py-3">
-                            <input
-                              type="checkbox"
-                              checked={selectedVisionScopeIds.includes(document.id)}
-                              onChange={() => toggleVisionScopeSelection(document.id)}
-                            />
-                          </td>
+                    </thead>
 
-                          <td className="px-4 py-3 font-medium text-foreground">
-                            {document.version}
-                          </td>
+                    <tbody>
+                      {visionScopeDocuments.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-10">
+                            <div className="flex flex-col items-center justify-center text-center">
+                              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                                <ClipboardList className="h-7 w-7 text-muted-foreground" />
+                              </div>
 
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {new Date(document.created_at).toLocaleDateString()}
-                          </td>
+                              <h3 className="text-base font-semibold text-foreground">
+                                No Vision & Scope Document yet
+                              </h3>
 
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {new Date(document.updated_at).toLocaleDateString()}
-                          </td>
-
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                title="View Document"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </button>
-
-                              <button
-                                type="button"
-                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                title="Edit Document"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setVisionScopeToDelete(document)}
-                                className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                                title="Delete Document"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                                Start defining your project vision and scope to guide
+                                requirement development.
+                              </p>
                             </div>
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        visionScopeDocuments.map((document) => (
+                          <tr key={document.id} className="border-t border-border">
+                            <td className="px-4 py-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedVisionScopeIds.includes(document.id)}
+                                onChange={() => toggleVisionScopeSelection(document.id)}
+                              />
+                            </td>
+
+                            <td className="px-4 py-3 font-medium text-foreground">
+                              {document.version}
+                            </td>
+
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {new Date(document.created_at).toLocaleDateString()}
+                            </td>
+
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {new Date(document.updated_at).toLocaleDateString()}
+                            </td>
+
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    router.push(
+                                      `/business-analyst/project/${projectId}/vision-scope/${document.id}`
+                                    )
+                                  }
+                                  className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                                  title="View Document"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </button>
+
+                                {canEditVisionScope && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditVisionScopeForm(document)}
+                                    className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                                    title="Edit Document"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                )}
+
+                                {canDeleteVisionScope && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setVisionScopeToDelete(document)}
+                                    className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                                    title="Delete Document"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )
       ) : (
         <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
           <h2 className="text-xl font-semibold text-foreground">Requirements</h2>
@@ -907,7 +1036,7 @@ export default function ProjectDetailsPageView() {
         </div>
       )}
 
-      {visionScopeToDelete && (
+      {visionScopeToDelete && canDeleteVisionScope && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
@@ -934,9 +1063,10 @@ export default function ProjectDetailsPageView() {
               <button
                 type="button"
                 onClick={confirmDeleteVisionScope}
-                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90"
+                disabled={loading}
+                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
               >
-                Confirm Delete
+                {loading ? "Deleting..." : "Confirm Delete"}
               </button>
             </div>
           </div>

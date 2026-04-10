@@ -4,9 +4,10 @@ import type React from "react"
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { ChevronFirst, ChevronLast } from "lucide-react"
 import { navigationByRole, type AppRole } from "@/features/access/navigation"
+import usePermissions from "@/features/access/use-permissions"
 
 type AppSidebarProps = {
   role: AppRole
@@ -15,8 +16,35 @@ type AppSidebarProps = {
 export default function AppSidebar({ role }: AppSidebarProps) {
   const pathname = usePathname()
   const [open, setOpen] = useState(true)
+  const { hasPermission } = usePermissions()
 
-  const items = navigationByRole[role] ?? []
+  const rawItems = navigationByRole[role] ?? []
+
+  const items = useMemo(() => {
+    return rawItems.filter((item) => {
+      if (item.href === "/business-analyst/project") {
+        return hasPermission("project.view")
+      }
+
+      if (item.href === "/admin/users") {
+        return hasPermission("users.view")
+      }
+
+      if (item.href === "/admin/roles") {
+        return hasPermission("roles.view")
+      }
+
+      if (item.href === "/admin/organization") {
+        return hasPermission("organization.view")
+      }
+
+      if (item.href === "/admin/templates") {
+        return hasPermission("templates.view")
+      }
+
+      return true
+    })
+  }, [rawItems, hasPermission])
 
   useEffect(() => {
     const saved = localStorage.getItem("sidebar-open")
@@ -85,7 +113,7 @@ export default function AppSidebar({ role }: AppSidebarProps) {
           <p className="text-xs leading-5">
             {open
               ? role === "admin"
-                ? "Manage users, roles, and organizations."
+                ? "Manage users, roles, organizations, and templates."
                 : "Manage projects and requirements."
               : "Tip"}
           </p>

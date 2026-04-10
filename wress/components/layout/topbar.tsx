@@ -80,12 +80,15 @@ export function Topbar({ onMenuClick }: TopbarProps) {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/logout`, {
+      const response = await fetch(`${API_BASE_URL}/signout`, {
         method: "POST",
         credentials: "include",
       })
 
-      if (!response.ok) return
+      if (!response.ok) {
+        console.error("Failed to sign out:", response.status)
+        return
+      }
 
       router.push("/signin")
       router.refresh()

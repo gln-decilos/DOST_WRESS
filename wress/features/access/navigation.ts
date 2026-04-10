@@ -23,6 +23,7 @@ export const navigationByRole: Record<AppRole, NavigationItem[]> = {
     { href: "/admin/organization", label: "Organization", icon: Building2 },
     { href: "/admin/roles", label: "Roles", icon: Shield },
     { href: "/admin/users", label: "Users", icon: UserRound },
+    { href: "/admin/templates", label: "Templates", icon: FileText },
   ],
   business_analyst: [
     { href: "/business-analyst/dashboard", label: "Dashboard", icon: Home },
