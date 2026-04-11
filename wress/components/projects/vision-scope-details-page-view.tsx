@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, Eye, Pencil } from "lucide-react"
 import usePermissions from "@/features/access/use-permissions"
 
 type TemplateField = {
@@ -70,6 +70,30 @@ type Props = {
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
+function normalizeVersion(version: string) {
+  return version.replace(/^v/i, "").trim()
+}
+
+function parseVersion(version: string) {
+  const clean = normalizeVersion(version)
+  const [majorStr, minorStr] = clean.split(".")
+  const major = Number(majorStr || 1)
+  const minor = Number(minorStr || 0)
+
+  return {
+    major: Number.isNaN(major) ? 1 : major,
+    minor: Number.isNaN(minor) ? 0 : minor,
+  }
+}
+
+function compareVersions(a: string, b: string) {
+  const va = parseVersion(a)
+  const vb = parseVersion(b)
+
+  if (va.major !== vb.major) return vb.major - va.major
+  return vb.minor - va.minor
+}
+
 export default function VisionScopeDetailsPageView({
   projectId,
   documentId,
@@ -78,12 +102,16 @@ export default function VisionScopeDetailsPageView({
   const { loading: permissionsLoading, hasPermission } = usePermissions()
 
   const canViewVisionScope = hasPermission("vision_scope.view")
+  const canEditVisionScope = hasPermission("vision_scope.edit")
 
   const [template, setTemplate] = useState<DocumentTemplate | null>(null)
   const [document, setDocument] = useState<VisionScopeDocument | null>(null)
+  const [documents, setDocuments] = useState<VisionScopeDocument[]>([])
   const [fetching, setFetching] = useState(true)
   const [message, setMessage] = useState("")
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
+
+  const latestVisionScope = useMemo(() => documents[0] || null, [documents])
 
   const getFieldValueFromDocument = (fieldId: number) => {
     const value = document?.values?.find((item) => item.template_field_id === fieldId)
@@ -120,12 +148,15 @@ export default function VisionScopeDetailsPageView({
       }
 
       const fetchedTemplate = templateData.template as DocumentTemplate
+      const sortedDocuments = [...(docsData.documents || [])].sort((a, b) =>
+        compareVersions(a.version, b.version)
+      )
+
       const fetchedDocument =
-        (docsData.documents || []).find(
-          (item: VisionScopeDocument) => item.id === documentId
-        ) || null
+        sortedDocuments.find((item: VisionScopeDocument) => item.id === documentId) || null
 
       setTemplate(fetchedTemplate)
+      setDocuments(sortedDocuments)
       setDocument(fetchedDocument)
 
       const initialOpenSections: Record<number, boolean> = {}
@@ -210,13 +241,47 @@ export default function VisionScopeDetailsPageView({
           Back to Vision & Scope
         </button>
 
-        <h1 className="text-2xl font-semibold text-foreground">
-          Vision & Scope {document.version}
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Created {new Date(document.created_at).toLocaleDateString()} · Updated{" "}
-          {new Date(document.updated_at).toLocaleDateString()}
-        </p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">
+              Vision & Scope {document.version}
+            </h1>
+            <p className="mt-2 text-muted-foreground">
+              Created {new Date(document.created_at).toLocaleDateString()} · Updated{" "}
+              {new Date(document.updated_at).toLocaleDateString()}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {latestVisionScope && latestVisionScope.id !== document.id && (
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    `/business-analyst/project/${projectId}/vision-scope/${latestVisionScope.id}`
+                  )
+                }
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+              >
+                <Eye className="h-4 w-4" />
+                View Latest Version
+              </button>
+            )}
+
+            {canEditVisionScope && (
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(`/business-analyst/project/${projectId}?tab=vision-scope`)
+                }
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Pencil className="h-4 w-4" />
+                Create New Version
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {message && (
@@ -224,6 +289,27 @@ export default function VisionScopeDetailsPageView({
           {message}
         </div>
       )}
+
+      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-muted-foreground">Version</p>
+          <p className="mt-1 text-lg font-semibold text-foreground">{document.version}</p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-muted-foreground">Created</p>
+          <p className="mt-1 text-foreground">
+            {new Date(document.created_at).toLocaleDateString()}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-muted-foreground">Updated</p>
+          <p className="mt-1 text-foreground">
+            {new Date(document.updated_at).toLocaleDateString()}
+          </p>
+        </div>
+      </div>
 
       <div className="rounded-2xl bg-background ring-1 ring-border">
         <div className="border-b border-border px-6 py-4">
@@ -256,9 +342,7 @@ export default function VisionScopeDetailsPageView({
                 <div className="space-y-5 border-t border-border px-4 py-4">
                   {section.fields.map((field) => (
                     <div key={field.id}>
-                      <p className="text-sm font-semibold text-foreground">
-                        {field.label}
-                      </p>
+                      <p className="text-sm font-semibold text-foreground">{field.label}</p>
 
                       <div className="mt-2 rounded-lg border border-border bg-background px-4 py-3">
                         <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">

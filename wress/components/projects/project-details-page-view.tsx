@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useEffect, useMemo, useState } from "react"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import {
   ChevronDown,
   ChevronRight,
@@ -90,6 +90,8 @@ type VisionScopeDocument = {
   values?: ProjectDocumentValue[]
 }
 
+type VersionIncrementType = "minor" | "major"
+
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
@@ -108,11 +110,47 @@ function getStatusClasses(status: string) {
   }
 }
 
+function normalizeVersion(version: string) {
+  return version.replace(/^v/i, "").trim()
+}
+
+function parseVersion(version: string) {
+  const clean = normalizeVersion(version)
+  const [majorStr, minorStr] = clean.split(".")
+  const major = Number(majorStr || 1)
+  const minor = Number(minorStr || 0)
+
+  return {
+    major: Number.isNaN(major) ? 1 : major,
+    minor: Number.isNaN(minor) ? 0 : minor,
+  }
+}
+
+function compareVersions(a: string, b: string) {
+  const va = parseVersion(a)
+  const vb = parseVersion(b)
+
+  if (va.major !== vb.major) return vb.major - va.major
+  return vb.minor - va.minor
+}
+
+function getNextMinorVersion(version: string) {
+  const { major, minor } = parseVersion(version)
+  return `${major}.${minor + 1}`
+}
+
+function getNextMajorVersion(version: string) {
+  const { major } = parseVersion(version)
+  return `${major + 1}.0`
+}
+
 export default function ProjectDetailsPageView() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const projectId = params.id
 
+  const initialTab = searchParams.get("tab")
   const { loading: permissionsLoading, hasPermission } = usePermissions()
 
   const canViewProject = hasPermission("project.view")
@@ -128,7 +166,15 @@ export default function ProjectDetailsPageView() {
   const [message, setMessage] = useState("")
   const [activeTab, setActiveTab] = useState<
     "overview" | "stakeholders" | "vision-scope" | "requirements"
-  >("overview")
+  >(
+    initialTab === "vision-scope"
+      ? "vision-scope"
+      : initialTab === "stakeholders"
+        ? "stakeholders"
+        : initialTab === "requirements"
+          ? "requirements"
+          : "overview"
+  )
   const [isEditMode, setIsEditMode] = useState(false)
 
   const [projectForm, setProjectForm] = useState<ProjectForm>({
@@ -150,6 +196,7 @@ export default function ProjectDetailsPageView() {
     useState<VisionScopeDocument | null>(null)
 
   const [isVisionScopeFormOpen, setIsVisionScopeFormOpen] = useState(false)
+  const [isSaveVersionModalOpen, setIsSaveVersionModalOpen] = useState(false)
 
   const [visionScopeVersion, setVisionScopeVersion] = useState("")
   const [visionScopeValues, setVisionScopeValues] = useState<Record<string, string>>({})
@@ -157,6 +204,16 @@ export default function ProjectDetailsPageView() {
     useState<VisionScopeDocument | null>(null)
 
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
+
+  const latestVisionScope = useMemo(
+    () => visionScopeDocuments[0] || null,
+    [visionScopeDocuments]
+  )
+
+  const previousVisionScopes = useMemo(
+    () => visionScopeDocuments.slice(1),
+    [visionScopeDocuments]
+  )
 
   const getFieldValueFromDocument = (
     document: VisionScopeDocument,
@@ -268,7 +325,11 @@ export default function ProjectDetailsPageView() {
         return
       }
 
-      setVisionScopeDocuments(data.documents || [])
+      const sortedDocuments = [...(data.documents || [])].sort((a, b) =>
+        compareVersions(a.version, b.version)
+      )
+
+      setVisionScopeDocuments(sortedDocuments)
     } catch (error) {
       console.error("Failed to fetch Vision & Scope documents:", error)
       setMessage("Failed to fetch Vision & Scope documents")
@@ -351,16 +412,23 @@ export default function ProjectDetailsPageView() {
 
     const initialValues: Record<string, string> = {}
 
-    template.sections.forEach((section) => {
-      section.fields.forEach((field) => {
-        initialValues[field.key] = field.default_value || ""
+    if (latestVisionScope) {
+      const latestValues = buildVisionScopeValuesFromDocument(latestVisionScope)
+      Object.assign(initialValues, latestValues)
+      setVisionScopeVersion(getNextMinorVersion(latestVisionScope.version))
+    } else {
+      template.sections.forEach((section) => {
+        section.fields.forEach((field) => {
+          initialValues[field.key] = field.default_value || ""
+        })
       })
-    })
+      setVisionScopeVersion("1.0")
+    }
 
     setEditingVisionScope(null)
     setVisionScopeValues(initialValues)
-    setVisionScopeVersion(`v${visionScopeDocuments.length + 1}.0`)
     setIsVisionScopeFormOpen(true)
+    setIsSaveVersionModalOpen(false)
     resetOpenSections()
     setMessage("")
   }
@@ -369,9 +437,10 @@ export default function ProjectDetailsPageView() {
     if (!canEditVisionScope || !template) return
 
     setEditingVisionScope(document)
-    setVisionScopeVersion(document.version)
     setVisionScopeValues(buildVisionScopeValuesFromDocument(document))
+    setVisionScopeVersion(document.version)
     setIsVisionScopeFormOpen(true)
+    setIsSaveVersionModalOpen(false)
     resetOpenSections()
     setMessage("")
   }
@@ -381,11 +450,10 @@ export default function ProjectDetailsPageView() {
     setVisionScopeValues({})
     setEditingVisionScope(null)
     setIsVisionScopeFormOpen(false)
+    setIsSaveVersionModalOpen(false)
   }
 
-  const handleCreateOrUpdateVisionScope = async (e: React.FormEvent) => {
-    e.preventDefault()
-
+  const saveVisionScopeVersion = async (incrementType: VersionIncrementType) => {
     if (!template) {
       setMessage("Template not found")
       return
@@ -395,6 +463,16 @@ export default function ProjectDetailsPageView() {
     setMessage("")
 
     try {
+      const baseVersion =
+        editingVisionScope?.version || latestVisionScope?.version || "1.0"
+
+      const computedVersion =
+        !latestVisionScope && !editingVisionScope
+          ? "1.0"
+          : incrementType === "major"
+            ? getNextMajorVersion(baseVersion)
+            : getNextMinorVersion(baseVersion)
+
       const valuesPayload = template.sections.flatMap((section) =>
         section.fields.map((field) => ({
           template_field_id: field.id,
@@ -402,23 +480,17 @@ export default function ProjectDetailsPageView() {
         }))
       )
 
-      const isEditing = Boolean(editingVisionScope)
-
-      const url = isEditing
-        ? `${API_BASE_URL}/project/${projectId}/documents/${editingVisionScope?.id}`
-        : `${API_BASE_URL}/project/${projectId}/documents`
-
-      const method = isEditing ? "PUT" : "POST"
-
-      const res = await fetch(url, {
-        method,
+      const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         credentials: "include",
         body: JSON.stringify({
           template_id: template.id,
-          version: visionScopeVersion || `v${visionScopeDocuments.length + 1}.0`,
+          version: computedVersion,
+          version_type: incrementType,
+          based_on_document_id: editingVisionScope?.id || latestVisionScope?.id || null,
           values: valuesPayload,
         }),
       })
@@ -426,17 +498,18 @@ export default function ProjectDetailsPageView() {
       const data = await res.json()
 
       if (!res.ok) {
-        setMessage(
-          data.message ||
-            `Failed to ${isEditing ? "update" : "create"} Vision & Scope document`
-        )
+        setMessage(data.message || "Failed to save Vision & Scope version")
         return
       }
 
       setMessage(
         data.message ||
-          `Vision & Scope document ${isEditing ? "updated" : "created"} successfully`
+          (!latestVisionScope
+            ? "Initial Vision & Scope version created successfully"
+            : `Vision & Scope saved as version ${computedVersion}`)
       )
+
+      setIsSaveVersionModalOpen(false)
       closeCreateVisionScopeForm()
       await fetchVisionScopeDocuments()
     } catch (error) {
@@ -447,6 +520,22 @@ export default function ProjectDetailsPageView() {
     }
   }
 
+  const handleCreateOrUpdateVisionScope = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!template) {
+      setMessage("Template not found")
+      return
+    }
+
+    if (!editingVisionScope && visionScopeDocuments.length === 0) {
+      await saveVisionScopeVersion("minor")
+      return
+    }
+
+    setIsSaveVersionModalOpen(true)
+  }
+
   const toggleVisionScopeSelection = (id: number) => {
     setSelectedVisionScopeIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
@@ -455,14 +544,14 @@ export default function ProjectDetailsPageView() {
 
   const toggleSelectAllVisionScopes = () => {
     if (
-      visionScopeDocuments.length > 0 &&
-      selectedVisionScopeIds.length === visionScopeDocuments.length
+      previousVisionScopes.length > 0 &&
+      selectedVisionScopeIds.length === previousVisionScopes.length
     ) {
       setSelectedVisionScopeIds([])
       return
     }
 
-    setSelectedVisionScopeIds(visionScopeDocuments.map((doc) => doc.id))
+    setSelectedVisionScopeIds(previousVisionScopes.map((doc) => doc.id))
   }
 
   const confirmDeleteVisionScope = async () => {
@@ -483,7 +572,7 @@ export default function ProjectDetailsPageView() {
       const data = await res.json()
 
       if (!res.ok) {
-        setMessage(data.message || "Failed to delete Vision & Scope document")
+        setMessage(data.message || "Failed to delete Vision & Scope version")
         return
       }
 
@@ -491,7 +580,7 @@ export default function ProjectDetailsPageView() {
 
       setVisionScopeToDelete(null)
       setSelectedVisionScopeIds((prev) => prev.filter((id) => id !== deletedId))
-      setMessage(data.message || "Vision & Scope document deleted successfully")
+      setMessage(data.message || "Vision & Scope version deleted successfully")
       await fetchVisionScopeDocuments()
     } catch (error) {
       console.error("Failed to delete vision & scope:", error)
@@ -793,7 +882,11 @@ export default function ProjectDetailsPageView() {
                   disabled={!template || templateLoading}
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
-                  {templateLoading ? "Loading Template..." : "Create Vision & Scope"}
+                  {templateLoading
+                    ? "Loading Template..."
+                    : visionScopeDocuments.length === 0
+                      ? "Create Vision & Scope"
+                      : "Create New Version"}
                 </button>
               )}
             </div>
@@ -803,10 +896,14 @@ export default function ProjectDetailsPageView() {
                 <div className="mb-4 flex items-center justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-semibold text-foreground">
-                      {editingVisionScope ? "Edit Vision & Scope" : "Create Vision & Scope"}
+                      {editingVisionScope
+                        ? `Edit Vision & Scope from ${editingVisionScope.version}`
+                        : visionScopeDocuments.length === 0
+                          ? "Create Vision & Scope"
+                          : "Create New Version"}
                     </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Fill in the sections below to define the project direction.
+                      Save changes to create a new version of the Vision & Scope document.
                     </p>
                   </div>
                 </div>
@@ -814,15 +911,21 @@ export default function ProjectDetailsPageView() {
                 <form onSubmit={handleCreateOrUpdateVisionScope} className="space-y-4">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-foreground">
-                      Version
+                      Current Version
                     </label>
                     <input
                       type="text"
-                      value={visionScopeVersion}
-                      onChange={(e) => setVisionScopeVersion(e.target.value)}
-                      placeholder="e.g. v1.0"
-                      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                      value={
+                        editingVisionScope
+                          ? `${editingVisionScope.version} (base version)`
+                          : visionScopeVersion
+                      }
+                      readOnly
+                      className="w-full cursor-not-allowed rounded-lg border border-border bg-muted px-3 py-2 text-foreground"
                     />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Version number is generated automatically by the system after you save.
+                    </p>
                   </div>
 
                   {template.sections.map((section) => (
@@ -849,14 +952,19 @@ export default function ProjectDetailsPageView() {
                             <div key={field.id}>
                               <label className="mb-1 block text-sm font-medium text-foreground">
                                 {field.label}
-                                {field.is_required && <span className="ml-1 text-red-500">*</span>}
+                                {field.is_required && (
+                                  <span className="ml-1 text-red-500">*</span>
+                                )}
                               </label>
 
                               {field.field_type === "textarea" ? (
                                 <textarea
                                   value={visionScopeValues[field.key] || ""}
                                   onChange={(e) =>
-                                    handleDynamicVisionScopeChange(field.key, e.target.value)
+                                    handleDynamicVisionScopeChange(
+                                      field.key,
+                                      e.target.value
+                                    )
                                   }
                                   rows={4}
                                   placeholder={field.placeholder || ""}
@@ -868,7 +976,10 @@ export default function ProjectDetailsPageView() {
                                   type="text"
                                   value={visionScopeValues[field.key] || ""}
                                   onChange={(e) =>
-                                    handleDynamicVisionScopeChange(field.key, e.target.value)
+                                    handleDynamicVisionScopeChange(
+                                      field.key,
+                                      e.target.value
+                                    )
                                   }
                                   placeholder={field.placeholder || ""}
                                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
@@ -894,11 +1005,7 @@ export default function ProjectDetailsPageView() {
                       disabled={loading}
                       className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                     >
-                      {loading
-                        ? "Saving..."
-                        : editingVisionScope
-                          ? "Update Vision & Scope"
-                          : "Save Vision & Scope"}
+                      {loading ? "Saving..." : "Save Changes"}
                     </button>
 
                     <button
@@ -914,115 +1021,220 @@ export default function ProjectDetailsPageView() {
             )}
 
             {!isVisionScopeFormOpen && (
-              <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-muted/40 text-left text-foreground">
-                      <tr>
-                        <th className="w-14 px-4 py-3 font-medium">
-                          <input
-                            type="checkbox"
-                            checked={
-                              visionScopeDocuments.length > 0 &&
-                              selectedVisionScopeIds.length === visionScopeDocuments.length
-                            }
-                            onChange={toggleSelectAllVisionScopes}
-                          />
-                        </th>
-                        <th className="px-4 py-3 font-medium">Version</th>
-                        <th className="px-4 py-3 font-medium">Date Created</th>
-                        <th className="px-4 py-3 font-medium">Date Modified</th>
-                        <th className="w-40 px-4 py-3 font-medium">Actions</th>
-                      </tr>
-                    </thead>
+              <div className="space-y-6">
+                {latestVisionScope ? (
+                  <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
+                    <div className="mb-4 flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-foreground">
+                          Latest Version Preview
+                        </h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Most recent Vision & Scope version for this project.
+                        </p>
+                      </div>
 
-                    <tbody>
-                      {visionScopeDocuments.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-4 py-10">
-                            <div className="flex flex-col items-center justify-center text-center">
-                              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                                <ClipboardList className="h-7 w-7 text-muted-foreground" />
-                              </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                          Version {latestVisionScope.version}
+                        </span>
 
-                              <h3 className="text-base font-semibold text-foreground">
-                                No Vision & Scope Document yet
-                              </h3>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            router.push(
+                              `/business-analyst/project/${projectId}/vision-scope/${latestVisionScope.id}`
+                            )
+                          }
+                          className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                          title="View Latest Version"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
 
-                              <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                                Start defining your project vision and scope to guide
-                                requirement development.
-                              </p>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        visionScopeDocuments.map((document) => (
-                          <tr key={document.id} className="border-t border-border">
-                            <td className="px-4 py-3">
+                        {canEditVisionScope && (
+                          <button
+                            type="button"
+                            onClick={() => openEditVisionScopeForm(latestVisionScope)}
+                            className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                            title="Edit from Latest Version"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+
+                        {canDeleteVisionScope && (
+                          <button
+                            type="button"
+                            onClick={() => setVisionScopeToDelete(latestVisionScope)}
+                            className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                            title="Delete Latest Version"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div className="rounded-xl border border-border bg-card p-4">
+                        <p className="text-sm font-medium text-muted-foreground">Version</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">
+                          {latestVisionScope.version}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-border bg-card p-4">
+                        <p className="text-sm font-medium text-muted-foreground">Created</p>
+                        <p className="mt-1 text-foreground">
+                          {new Date(latestVisionScope.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-border bg-card p-4">
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Last Updated
+                        </p>
+                        <p className="mt-1 text-foreground">
+                          {new Date(latestVisionScope.updated_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl bg-background p-10 text-center ring-1 ring-border">
+                    <div className="mb-4 flex justify-center">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                        <ClipboardList className="h-7 w-7 text-muted-foreground" />
+                      </div>
+                    </div>
+
+                    <h3 className="text-base font-semibold text-foreground">
+                      No Vision & Scope Document yet
+                    </h3>
+
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Start defining your project vision and scope to guide requirement
+                      development.
+                    </p>
+                  </div>
+                )}
+
+                {previousVisionScopes.length > 0 && (
+                  <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
+                    <div className="border-b border-border px-6 py-4">
+                      <h3 className="text-lg font-semibold text-foreground">
+                        Previous Versions
+                      </h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        View earlier saved versions of the Vision & Scope document.
+                      </p>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-muted/40 text-left text-foreground">
+                          <tr>
+                            <th className="w-14 px-4 py-3 font-medium">
                               <input
                                 type="checkbox"
-                                checked={selectedVisionScopeIds.includes(document.id)}
-                                onChange={() => toggleVisionScopeSelection(document.id)}
+                                checked={
+                                  previousVisionScopes.length > 0 &&
+                                  selectedVisionScopeIds.length ===
+                                    previousVisionScopes.length
+                                }
+                                onChange={toggleSelectAllVisionScopes}
                               />
-                            </td>
-
-                            <td className="px-4 py-3 font-medium text-foreground">
-                              {document.version}
-                            </td>
-
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {new Date(document.created_at).toLocaleDateString()}
-                            </td>
-
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {new Date(document.updated_at).toLocaleDateString()}
-                            </td>
-
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    router.push(
-                                      `/business-analyst/project/${projectId}/vision-scope/${document.id}`
-                                    )
-                                  }
-                                  className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                  title="View Document"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </button>
-
-                                {canEditVisionScope && (
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditVisionScopeForm(document)}
-                                    className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                    title="Edit Document"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </button>
-                                )}
-
-                                {canDeleteVisionScope && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setVisionScopeToDelete(document)}
-                                    className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                                    title="Delete Document"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
+                            </th>
+                            <th className="px-4 py-3 font-medium">Version</th>
+                            <th className="px-4 py-3 font-medium">Date Created</th>
+                            <th className="px-4 py-3 font-medium">Date Modified</th>
+                            <th className="w-40 px-4 py-3 font-medium">Actions</th>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+
+                        <tbody>
+                          {previousVisionScopes.map((document) => (
+                            <tr
+                              key={document.id}
+                              className="cursor-pointer border-t border-border hover:bg-muted/30"
+                              onClick={() =>
+                                router.push(
+                                  `/business-analyst/project/${projectId}/vision-scope/${document.id}`
+                                )
+                              }
+                            >
+                              <td
+                                className="px-4 py-3"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedVisionScopeIds.includes(document.id)}
+                                  onChange={() => toggleVisionScopeSelection(document.id)}
+                                />
+                              </td>
+
+                              <td className="px-4 py-3 font-medium text-foreground">
+                                {document.version}
+                              </td>
+
+                              <td className="px-4 py-3 text-muted-foreground">
+                                {new Date(document.created_at).toLocaleDateString()}
+                              </td>
+
+                              <td className="px-4 py-3 text-muted-foreground">
+                                {new Date(document.updated_at).toLocaleDateString()}
+                              </td>
+
+                              <td
+                                className="px-4 py-3"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      router.push(
+                                        `/business-analyst/project/${projectId}/vision-scope/${document.id}`
+                                      )
+                                    }
+                                    className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                                    title="View Version"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
+
+                                  {canEditVisionScope && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openEditVisionScopeForm(document)}
+                                      className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                                      title="Edit from This Version"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </button>
+                                  )}
+
+                                  {canDeleteVisionScope && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setVisionScopeToDelete(document)}
+                                      className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                                      title="Delete Version"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1036,11 +1248,62 @@ export default function ProjectDetailsPageView() {
         </div>
       )}
 
+      {isSaveVersionModalOpen && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              Save as New Version
+            </h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              Choose how the system should version this updated Vision & Scope
+              document.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              <button
+                type="button"
+                onClick={() => saveVisionScopeVersion("minor")}
+                disabled={loading}
+                className="w-full rounded-lg border border-border px-4 py-3 text-left hover:bg-muted disabled:opacity-60"
+              >
+                <p className="font-medium text-foreground">Minor Update</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Creates the next minor version, for example 1.0 to 1.1.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => saveVisionScopeVersion("major")}
+                disabled={loading}
+                className="w-full rounded-lg border border-border px-4 py-3 text-left hover:bg-muted disabled:opacity-60"
+              >
+                <p className="font-medium text-foreground">Major Update</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Creates the next major version, for example 1.0 to 2.0.
+                </p>
+              </button>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsSaveVersionModalOpen(false)}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {visionScopeToDelete && canDeleteVisionScope && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
-              Delete Vision & Scope Document
+              Delete Vision & Scope Version
             </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
