@@ -205,14 +205,27 @@ export default function ProjectDetailsPageView() {
 
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
 
-  const latestVisionScope = useMemo(
-    () => visionScopeDocuments[0] || null,
+  const draftVisionScope = useMemo(
+    () => visionScopeDocuments.find((doc) => doc.status === "Draft") || null,
     [visionScopeDocuments]
   )
 
-  const previousVisionScopes = useMemo(
-    () => visionScopeDocuments.slice(1),
+  const publishedVisionScopes = useMemo(
+    () =>
+      [...visionScopeDocuments]
+        .filter((doc) => doc.status !== "Draft")
+        .sort((a, b) => compareVersions(a.version, b.version)),
     [visionScopeDocuments]
+  )
+
+  const latestVisionScope = useMemo(
+    () => publishedVisionScopes[0] || null,
+    [publishedVisionScopes]
+  )
+
+  const previousVisionScopes = useMemo(
+    () => publishedVisionScopes.slice(1),
+    [publishedVisionScopes]
   )
 
   const getFieldValueFromDocument = (
@@ -325,11 +338,7 @@ export default function ProjectDetailsPageView() {
         return
       }
 
-      const sortedDocuments = [...(data.documents || [])].sort((a, b) =>
-        compareVersions(a.version, b.version)
-      )
-
-      setVisionScopeDocuments(sortedDocuments)
+      setVisionScopeDocuments(data.documents || [])
     } catch (error) {
       console.error("Failed to fetch Vision & Scope documents:", error)
       setMessage("Failed to fetch Vision & Scope documents")
@@ -408,24 +417,28 @@ export default function ProjectDetailsPageView() {
   }
 
   const openCreateVisionScopeForm = () => {
-    if (!canCreateVisionScope || !template) return
+    if (!template || (!canCreateVisionScope && !canEditVisionScope)) return
 
     const initialValues: Record<string, string> = {}
 
-    if (latestVisionScope) {
-      const latestValues = buildVisionScopeValuesFromDocument(latestVisionScope)
-      Object.assign(initialValues, latestValues)
-      setVisionScopeVersion(getNextMinorVersion(latestVisionScope.version))
+    if (draftVisionScope) {
+      Object.assign(initialValues, buildVisionScopeValuesFromDocument(draftVisionScope))
+      setEditingVisionScope(draftVisionScope)
+      setVisionScopeVersion(draftVisionScope.version || "Draft")
+    } else if (latestVisionScope) {
+      Object.assign(initialValues, buildVisionScopeValuesFromDocument(latestVisionScope))
+      setEditingVisionScope(null)
+      setVisionScopeVersion(latestVisionScope.version)
     } else {
       template.sections.forEach((section) => {
         section.fields.forEach((field) => {
           initialValues[field.key] = field.default_value || ""
         })
       })
-      setVisionScopeVersion("1.0")
+      setEditingVisionScope(null)
+      setVisionScopeVersion("Draft")
     }
 
-    setEditingVisionScope(null)
     setVisionScopeValues(initialValues)
     setIsVisionScopeFormOpen(true)
     setIsSaveVersionModalOpen(false)
@@ -438,7 +451,7 @@ export default function ProjectDetailsPageView() {
 
     setEditingVisionScope(document)
     setVisionScopeValues(buildVisionScopeValuesFromDocument(document))
-    setVisionScopeVersion(document.version)
+    setVisionScopeVersion(document.status === "Draft" ? "Draft" : document.version)
     setIsVisionScopeFormOpen(true)
     setIsSaveVersionModalOpen(false)
     resetOpenSections()
@@ -453,6 +466,89 @@ export default function ProjectDetailsPageView() {
     setIsSaveVersionModalOpen(false)
   }
 
+  const buildValuesPayload = () => {
+    if (!template) return []
+
+    return template.sections.flatMap((section) =>
+      section.fields.map((field) => ({
+        template_field_id: field.id,
+        value_text: visionScopeValues[field.key] || "",
+      }))
+    )
+  }
+
+  const saveVisionScopeDraft = async () => {
+    if (!template) {
+      setMessage("Template not found")
+      return
+    }
+
+    setLoading(true)
+    setMessage("")
+
+    try {
+      const valuesPayload = buildValuesPayload()
+
+      if (editingVisionScope?.status === "Draft") {
+        const res = await fetch(
+          `${API_BASE_URL}/project/${projectId}/documents/${editingVisionScope.id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              status: "Draft",
+              values: valuesPayload,
+            }),
+          }
+        )
+
+        const data = await res.json()
+
+        if (!res.ok) {
+          setMessage(data.message || "Failed to save draft")
+          return
+        }
+
+        setMessage(data.message || "Draft updated successfully")
+      } else {
+        const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            template_id: template.id,
+            version: "Draft",
+            status: "Draft",
+            based_on_document_id: editingVisionScope?.id || latestVisionScope?.id || null,
+            values: valuesPayload,
+          }),
+        })
+
+        const data = await res.json()
+
+        if (!res.ok) {
+          setMessage(data.message || "Failed to save draft")
+          return
+        }
+
+        setMessage(data.message || "Draft saved successfully")
+      }
+
+      closeCreateVisionScopeForm()
+      await fetchVisionScopeDocuments()
+    } catch (error) {
+      console.error("Failed to save draft:", error)
+      setMessage("Failed to save draft")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const saveVisionScopeVersion = async (incrementType: VersionIncrementType) => {
     if (!template) {
       setMessage("Template not found")
@@ -463,64 +559,83 @@ export default function ProjectDetailsPageView() {
     setMessage("")
 
     try {
-      const baseVersion =
-        editingVisionScope?.version || latestVisionScope?.version || "1.0"
+      const baseVersion = latestVisionScope?.version || "1.0"
+      const computedVersion = latestVisionScope
+        ? incrementType === "major"
+          ? getNextMajorVersion(baseVersion)
+          : getNextMinorVersion(baseVersion)
+        : "1.0"
 
-      const computedVersion =
-        !latestVisionScope && !editingVisionScope
-          ? "1.0"
-          : incrementType === "major"
-            ? getNextMajorVersion(baseVersion)
-            : getNextMinorVersion(baseVersion)
+      const valuesPayload = buildValuesPayload()
 
-      const valuesPayload = template.sections.flatMap((section) =>
-        section.fields.map((field) => ({
-          template_field_id: field.id,
-          value_text: visionScopeValues[field.key] || "",
-        }))
-      )
+      if (editingVisionScope?.status === "Draft") {
+        const res = await fetch(
+          `${API_BASE_URL}/project/${projectId}/documents/${editingVisionScope.id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              version: computedVersion,
+              status: "Published",
+              values: valuesPayload,
+            }),
+          }
+        )
 
-      const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          template_id: template.id,
-          version: computedVersion,
-          version_type: incrementType,
-          based_on_document_id: editingVisionScope?.id || latestVisionScope?.id || null,
-          values: valuesPayload,
-        }),
-      })
+        const data = await res.json()
 
-      const data = await res.json()
+        if (!res.ok) {
+          setMessage(data.message || "Failed to publish version")
+          return
+        }
 
-      if (!res.ok) {
-        setMessage(data.message || "Failed to save Vision & Scope version")
-        return
+        setMessage(data.message || `Vision & Scope published as version ${computedVersion}`)
+      } else {
+        const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            template_id: template.id,
+            version: computedVersion,
+            status: "Published",
+            based_on_document_id: latestVisionScope?.id || null,
+            values: valuesPayload,
+          }),
+        })
+
+        const data = await res.json()
+
+        if (!res.ok) {
+          setMessage(data.message || "Failed to save Vision & Scope version")
+          return
+        }
+
+        setMessage(
+          data.message ||
+            (!latestVisionScope
+              ? "Initial Vision & Scope version created successfully"
+              : `Vision & Scope saved as version ${computedVersion}`)
+        )
       }
-
-      setMessage(
-        data.message ||
-          (!latestVisionScope
-            ? "Initial Vision & Scope version created successfully"
-            : `Vision & Scope saved as version ${computedVersion}`)
-      )
 
       setIsSaveVersionModalOpen(false)
       closeCreateVisionScopeForm()
       await fetchVisionScopeDocuments()
     } catch (error) {
-      console.error("Failed to save vision & scope:", error)
-      setMessage("Failed to save vision & scope")
+      console.error("Failed to save vision & scope version:", error)
+      setMessage("Failed to save vision & scope version")
     } finally {
       setLoading(false)
     }
   }
 
-  const handleCreateOrUpdateVisionScope = async (e: React.FormEvent) => {
+  const handleOpenPublishModal = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!template) {
@@ -528,7 +643,7 @@ export default function ProjectDetailsPageView() {
       return
     }
 
-    if (!editingVisionScope && visionScopeDocuments.length === 0) {
+    if (!latestVisionScope) {
       await saveVisionScopeVersion("minor")
       return
     }
@@ -876,7 +991,7 @@ export default function ProjectDetailsPageView() {
                 </p>
               </div>
 
-              {!isVisionScopeFormOpen && canCreateVisionScope && (
+              {!isVisionScopeFormOpen && (canCreateVisionScope || canEditVisionScope) && (
                 <button
                   onClick={openCreateVisionScopeForm}
                   disabled={!template || templateLoading}
@@ -884,9 +999,11 @@ export default function ProjectDetailsPageView() {
                 >
                   {templateLoading
                     ? "Loading Template..."
-                    : visionScopeDocuments.length === 0
-                      ? "Create Vision & Scope"
-                      : "Create New Version"}
+                    : draftVisionScope
+                      ? "Continue Draft"
+                      : visionScopeDocuments.length === 0
+                        ? "Create Vision & Scope"
+                        : "Create New Draft"}
                 </button>
               )}
             </div>
@@ -896,35 +1013,37 @@ export default function ProjectDetailsPageView() {
                 <div className="mb-4 flex items-center justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-semibold text-foreground">
-                      {editingVisionScope
-                        ? `Edit Vision & Scope from ${editingVisionScope.version}`
-                        : visionScopeDocuments.length === 0
-                          ? "Create Vision & Scope"
-                          : "Create New Version"}
+                      {editingVisionScope?.status === "Draft"
+                        ? "Edit Draft Vision & Scope"
+                        : latestVisionScope
+                          ? "Create New Draft"
+                          : "Create Vision & Scope"}
                     </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Save changes to create a new version of the Vision & Scope document.
+                      Drafts stay editable until you publish them as a version.
                     </p>
                   </div>
                 </div>
 
-                <form onSubmit={handleCreateOrUpdateVisionScope} className="space-y-4">
+                <form onSubmit={handleOpenPublishModal} className="space-y-4">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-foreground">
-                      Current Version
+                      Current State
                     </label>
                     <input
                       type="text"
                       value={
-                        editingVisionScope
-                          ? `${editingVisionScope.version} (base version)`
-                          : visionScopeVersion
+                        editingVisionScope?.status === "Draft"
+                          ? "Draft"
+                          : latestVisionScope
+                            ? `Based on version ${latestVisionScope.version}`
+                            : "New draft"
                       }
                       readOnly
                       className="w-full cursor-not-allowed rounded-lg border border-border bg-muted px-3 py-2 text-foreground"
                     />
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Version number is generated automatically by the system after you save.
+                      Draft does not create a version yet. Publish when ready.
                     </p>
                   </div>
 
@@ -961,10 +1080,7 @@ export default function ProjectDetailsPageView() {
                                 <textarea
                                   value={visionScopeValues[field.key] || ""}
                                   onChange={(e) =>
-                                    handleDynamicVisionScopeChange(
-                                      field.key,
-                                      e.target.value
-                                    )
+                                    handleDynamicVisionScopeChange(field.key, e.target.value)
                                   }
                                   rows={4}
                                   placeholder={field.placeholder || ""}
@@ -976,10 +1092,7 @@ export default function ProjectDetailsPageView() {
                                   type="text"
                                   value={visionScopeValues[field.key] || ""}
                                   onChange={(e) =>
-                                    handleDynamicVisionScopeChange(
-                                      field.key,
-                                      e.target.value
-                                    )
+                                    handleDynamicVisionScopeChange(field.key, e.target.value)
                                   }
                                   placeholder={field.placeholder || ""}
                                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
@@ -999,13 +1112,22 @@ export default function ProjectDetailsPageView() {
                     </div>
                   ))}
 
-                  <div className="flex items-center gap-3 pt-2">
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={saveVisionScopeDraft}
+                      disabled={loading}
+                      className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
+                    >
+                      {loading ? "Saving..." : "Save as Draft"}
+                    </button>
+
                     <button
                       type="submit"
                       disabled={loading}
                       className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                     >
-                      {loading ? "Saving..." : "Save Changes"}
+                      {loading ? "Saving..." : "Save Version"}
                     </button>
 
                     <button
@@ -1022,15 +1144,79 @@ export default function ProjectDetailsPageView() {
 
             {!isVisionScopeFormOpen && (
               <div className="space-y-6">
+                {draftVisionScope && (
+                  <div className="rounded-2xl bg-amber-50 p-6 ring-1 ring-amber-200">
+                    <div className="mb-4 flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-amber-900">
+                          Draft in Progress
+                        </h3>
+                        <p className="mt-1 text-sm text-amber-800">
+                          This draft is still editable and has not been published as a version.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+                          Draft
+                        </span>
+
+                        {canEditVisionScope && (
+                          <button
+                            type="button"
+                            onClick={() => openEditVisionScopeForm(draftVisionScope)}
+                            className="rounded-lg border border-amber-300 bg-white p-2 text-amber-800 hover:bg-amber-100"
+                            title="Edit Draft"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+
+                        {canDeleteVisionScope && (
+                          <button
+                            type="button"
+                            onClick={() => setVisionScopeToDelete(draftVisionScope)}
+                            className="rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50"
+                            title="Delete Draft"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div className="rounded-xl border border-amber-200 bg-white p-4">
+                        <p className="text-sm font-medium text-amber-700">Status</p>
+                        <p className="mt-1 text-lg font-semibold text-amber-900">Draft</p>
+                      </div>
+
+                      <div className="rounded-xl border border-amber-200 bg-white p-4">
+                        <p className="text-sm font-medium text-amber-700">Created</p>
+                        <p className="mt-1 text-amber-900">
+                          {new Date(draftVisionScope.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-amber-200 bg-white p-4">
+                        <p className="text-sm font-medium text-amber-700">Last Updated</p>
+                        <p className="mt-1 text-amber-900">
+                          {new Date(draftVisionScope.updated_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {latestVisionScope ? (
                   <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
                     <div className="mb-4 flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-foreground">
-                          Latest Version Preview
+                          Latest Published Version
                         </h3>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          Most recent Vision & Scope version for this project.
+                          Most recent published Vision & Scope version for this project.
                         </p>
                       </div>
 
@@ -1052,12 +1238,12 @@ export default function ProjectDetailsPageView() {
                           <Eye className="h-4 w-4" />
                         </button>
 
-                        {canEditVisionScope && (
+                        {canEditVisionScope && !draftVisionScope && (
                           <button
                             type="button"
-                            onClick={() => openEditVisionScopeForm(latestVisionScope)}
+                            onClick={openCreateVisionScopeForm}
                             className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                            title="Edit from Latest Version"
+                            title="Create Draft From Latest Version"
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
@@ -1101,7 +1287,7 @@ export default function ProjectDetailsPageView() {
                       </div>
                     </div>
                   </div>
-                ) : (
+                ) : !draftVisionScope ? (
                   <div className="rounded-2xl bg-background p-10 text-center ring-1 ring-border">
                     <div className="mb-4 flex justify-center">
                       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
@@ -1118,7 +1304,7 @@ export default function ProjectDetailsPageView() {
                       development.
                     </p>
                   </div>
-                )}
+                ) : null}
 
                 {previousVisionScopes.length > 0 && (
                   <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
@@ -1127,7 +1313,7 @@ export default function ProjectDetailsPageView() {
                         Previous Versions
                       </h3>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        View earlier saved versions of the Vision & Scope document.
+                        View earlier published versions of the Vision & Scope document.
                       </p>
                     </div>
 
@@ -1205,17 +1391,6 @@ export default function ProjectDetailsPageView() {
                                     <Eye className="h-4 w-4" />
                                   </button>
 
-                                  {canEditVisionScope && (
-                                    <button
-                                      type="button"
-                                      onClick={() => openEditVisionScopeForm(document)}
-                                      className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                      title="Edit from This Version"
-                                    >
-                                      <Pencil className="h-4 w-4" />
-                                    </button>
-                                  )}
-
                                   {canDeleteVisionScope && (
                                     <button
                                       type="button"
@@ -1252,12 +1427,11 @@ export default function ProjectDetailsPageView() {
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
-              Save as New Version
+              Save as Published Version
             </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
-              Choose how the system should version this updated Vision & Scope
-              document.
+              Choose how the system should version this Vision & Scope document.
             </p>
 
             <div className="mt-5 space-y-3">
@@ -1303,13 +1477,15 @@ export default function ProjectDetailsPageView() {
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
-              Delete Vision & Scope Version
+              Delete Vision & Scope {visionScopeToDelete.status === "Draft" ? "Draft" : "Version"}
             </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
               Are you sure you want to delete{" "}
               <span className="font-semibold text-foreground">
-                {visionScopeToDelete.version}
+                {visionScopeToDelete.status === "Draft"
+                  ? "this draft"
+                  : visionScopeToDelete.version}
               </span>
               ? This action cannot be undone.
             </p>

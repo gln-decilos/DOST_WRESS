@@ -24,7 +24,7 @@ def get_project_vision_scope_documents(project_id):
     documents = ProjectDocument.query.filter_by(
         project_id=project_id,
         template_id=template.id
-    ).order_by(ProjectDocument.created_at.desc()).all()
+    ).order_by(ProjectDocument.updated_at.desc()).all()
 
     return jsonify({
         "documents": [doc.to_dict(include_values=True) for doc in documents]
@@ -37,21 +37,37 @@ def create_project_vision_scope_document(project_id):
     data = request.get_json() or {}
 
     template_id = data.get("template_id")
-    version = (data.get("version") or "v1.0").strip()
+    version = (data.get("version") or "").strip()
+    status = (data.get("status") or "Draft").strip()
     values = data.get("values", [])
 
     if not template_id:
-        return jsonify({"message": "Template is required"}), 400
+      return jsonify({"message": "Template is required"}), 400
 
     template = DocumentTemplate.query.get(template_id)
     if not template:
         return jsonify({"message": "Template not found"}), 404
 
+    if status == "Draft":
+        existing_draft = ProjectDocument.query.filter_by(
+            project_id=project_id,
+            template_id=template.id,
+            status="Draft"
+        ).first()
+
+        if existing_draft:
+            return jsonify({"message": "A draft already exists for this project"}), 400
+
+        version = "Draft"
+    else:
+        if not version:
+            return jsonify({"message": "Version is required for published documents"}), 400
+
     document = ProjectDocument(
         project_id=project_id,
         template_id=template.id,
         version=version,
-        status="Draft",
+        status=status,
         created_by=session.get("user_id"),
     )
     db.session.add(document)
@@ -85,6 +101,7 @@ def update_project_vision_scope_document(project_id, document_id):
     data = request.get_json() or {}
 
     version = (data.get("version") or "").strip()
+    status = (data.get("status") or "").strip()
     values = data.get("values", [])
 
     document = ProjectDocument.query.filter_by(
@@ -97,6 +114,9 @@ def update_project_vision_scope_document(project_id, document_id):
 
     if version:
         document.version = version
+
+    if status:
+        document.status = status
 
     existing_values = ProjectDocumentValue.query.filter_by(
         document_id=document.id
