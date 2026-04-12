@@ -1,50 +1,23 @@
 "use client"
 
-import type React from "react"
-
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { ChevronFirst, ChevronLast } from "lucide-react"
-import { navigationByRole, type AppRole } from "@/features/access/navigation"
+import { navigationItems } from "@/features/access/navigation"
 import usePermissions from "@/features/access/use-permissions"
 
-type AppSidebarProps = {
-  role: AppRole
-}
-
-export default function AppSidebar({ role }: AppSidebarProps) {
+export default function AppSidebar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(true)
   const { hasPermission } = usePermissions()
 
-  const rawItems = navigationByRole[role] ?? []
-
   const items = useMemo(() => {
-    return rawItems.filter((item) => {
-      if (item.href === "/business-analyst/project") {
-        return hasPermission("project.view")
-      }
-
-      if (item.href === "/admin/users") {
-        return hasPermission("users.view")
-      }
-
-      if (item.href === "/admin/roles") {
-        return hasPermission("roles.view")
-      }
-
-      if (item.href === "/admin/organization") {
-        return hasPermission("organization.view")
-      }
-
-      if (item.href === "/admin/templates") {
-        return hasPermission("templates.view")
-      }
-
-      return true
+    return navigationItems.filter((item) => {
+      if (!item.permission) return true
+      return hasPermission(item.permission)
     })
-  }, [rawItems, hasPermission])
+  }, [hasPermission])
 
   useEffect(() => {
     const saved = localStorage.getItem("sidebar-open")
@@ -69,7 +42,7 @@ export default function AppSidebar({ role }: AppSidebarProps) {
           </div>
 
           <span className={`${open ? "block" : "hidden"} text-sm font-semibold`}>
-            {role === "admin" ? "WRESS Admin" : "WRESS BA"}
+            WRESS
           </span>
         </div>
 
@@ -111,11 +84,7 @@ export default function AppSidebar({ role }: AppSidebarProps) {
       <div className="px-3 pb-5 pt-2">
         <div className="rounded-2xl bg-white/10 p-3">
           <p className="text-xs leading-5">
-            {open
-              ? role === "admin"
-                ? "Manage users, roles, organizations, and templates."
-                : "Manage projects and requirements."
-              : "Tip"}
+            {open ? "Manage your WRESS modules based on your permissions." : "Tip"}
           </p>
         </div>
       </div>

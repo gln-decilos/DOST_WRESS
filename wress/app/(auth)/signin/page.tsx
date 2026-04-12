@@ -31,11 +31,11 @@ export default function SignInPage() {
     const roleNames = roles.map((role) => role.name)
 
     if (roleNames.includes("System Admin")) {
-      return "/admin/dashboard"
+      return "/dashboard"
     }
 
     if (roleNames.includes("Business Analyst")) {
-      return "/business-analyst/dashboard"
+      return "/dashboard"
     }
 
     return "/signin"

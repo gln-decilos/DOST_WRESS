@@ -8,26 +8,44 @@ import {
 } from "lucide-react"
 import type React from "react"
 
-export type AppRole = "admin" | "business_analyst"
-
 export type NavigationItem = {
   href: string
   label: string
   icon: React.ComponentType<{ className?: string }>
+  permission?: string
 }
 
-export const navigationByRole: Record<AppRole, NavigationItem[]> = {
-  admin: [
-    { href: "/admin/dashboard", label: "Dashboard", icon: Home },
-    { href: "/admin/profile", label: "Profile", icon: UserRound },
-    { href: "/admin/organization", label: "Organization", icon: Building2 },
-    { href: "/admin/roles", label: "Roles", icon: Shield },
-    { href: "/admin/users", label: "Users", icon: UserRound },
-    { href: "/admin/templates", label: "Templates", icon: FileText },
-  ],
-  business_analyst: [
-    { href: "/business-analyst/dashboard", label: "Dashboard", icon: Home },
-    { href: "/business-analyst/profile", label: "Profile", icon: UserRound },
-    { href: "/business-analyst/project", label: "Projects", icon: FolderKanban },
-  ],
-}
+export const navigationItems: NavigationItem[] = [
+  { href: "/dashboard", label: "Dashboard", icon: Home },
+  { href: "/profile", label: "Profile", icon: UserRound },
+  {
+    href: "/organization",
+    label: "Organization",
+    icon: Building2,
+    permission: "organization.view",
+  },
+  {
+    href: "/roles",
+    label: "Roles",
+    icon: Shield,
+    permission: "roles.view",
+  },
+  {
+    href: "/users",
+    label: "Users",
+    icon: UserRound,
+    permission: "users.view",
+  },
+  {
+    href: "/templates",
+    label: "Templates",
+    icon: FileText,
+    permission: "templates.view",
+  },
+  {
+    href: "/project",
+    label: "Projects",
+    icon: FolderKanban,
+    permission: "project.view",
+  },
+]

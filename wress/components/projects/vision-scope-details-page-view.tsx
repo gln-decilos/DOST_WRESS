@@ -234,7 +234,7 @@ export default function VisionScopeDetailsPageView({
     <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
       <div className="mb-6">
         <button
-          onClick={() => router.push(`/business-analyst/project/${projectId}?tab=vision-scope`)}
+          onClick={() => router.push(`/project/${projectId}?tab=vision-scope`)}
           className="mb-3 inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -258,7 +258,7 @@ export default function VisionScopeDetailsPageView({
                 type="button"
                 onClick={() =>
                   router.push(
-                    `/business-analyst/project/${projectId}/vision-scope/${latestVisionScope.id}`
+                    `/project/${projectId}/vision-scope/${latestVisionScope.id}`
                   )
                 }
                 className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
@@ -272,7 +272,7 @@ export default function VisionScopeDetailsPageView({
               <button
                 type="button"
                 onClick={() =>
-                  router.push(`/business-analyst/project/${projectId}?tab=vision-scope`)
+                  router.push(`/project/${projectId}?tab=vision-scope`)
                 }
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               >

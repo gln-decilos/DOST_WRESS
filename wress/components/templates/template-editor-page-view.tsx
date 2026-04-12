@@ -465,7 +465,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
           </div>
 
           <button
-            onClick={() => router.push("/admin/templates")}
+            onClick={() => router.push("/templates")}
             className="inline-flex items-center gap-2 self-start rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-100"
           >
             <ChevronLeft className="h-4 w-4" />

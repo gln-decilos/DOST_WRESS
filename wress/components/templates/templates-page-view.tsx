@@ -468,7 +468,7 @@ export default function TemplatesPageView() {
             {canEditTemplates && (
               <button
                 onClick={() => {
-                  router.push(`/admin/templates/${activeMenuTemplate.id}`)
+                  router.push(`/templates/${activeMenuTemplate.id}`)
                   setOpenMenuId(null)
                   setMenuPosition(null)
                 }}

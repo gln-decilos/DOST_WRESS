@@ -484,7 +484,7 @@ export default function ProjectsPageView() {
                 <div className="mt-5 flex items-center justify-end gap-2">
                   <button
                     onClick={() =>
-                      router.push(`/business-analyst/project/${project.id}`)
+                      router.push(`/project/${project.id}`)
                     }
                     className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border text-foreground hover:bg-muted"
                     title="View Project"

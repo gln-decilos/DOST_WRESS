@@ -747,7 +747,7 @@ export default function ProjectDetailsPageView() {
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <button
-            onClick={() => router.push("/business-analyst/project")}
+            onClick={() => router.push("/project")}
             className="mb-3 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
           >
             Back to Projects
@@ -1229,7 +1229,7 @@ export default function ProjectDetailsPageView() {
                           type="button"
                           onClick={() =>
                             router.push(
-                              `/business-analyst/project/${projectId}/vision-scope/${latestVisionScope.id}`
+                              `/project/${projectId}/vision-scope/${latestVisionScope.id}`
                             )
                           }
                           className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
@@ -1346,7 +1346,7 @@ export default function ProjectDetailsPageView() {
                               className="cursor-pointer border-t border-border hover:bg-muted/30"
                               onClick={() =>
                                 router.push(
-                                  `/business-analyst/project/${projectId}/vision-scope/${document.id}`
+                                  `/project/${projectId}/vision-scope/${document.id}`
                                 )
                               }
                             >
@@ -1382,7 +1382,7 @@ export default function ProjectDetailsPageView() {
                                     type="button"
                                     onClick={() =>
                                       router.push(
-                                        `/business-analyst/project/${projectId}/vision-scope/${document.id}`
+                                        `/project/${projectId}/vision-scope/${document.id}`
                                       )
                                     }
                                     className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
