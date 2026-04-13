@@ -3,6 +3,7 @@ from app.extensions import db
 
 from app.seeder.permission_seeder import seed_permissions
 from app.seeder.document_template_seeder import seed_vision_scope_template
+from app.seeder.document_template_seeder import seed_requirements_template
 
 
 def run_seeders():
@@ -11,6 +12,8 @@ def run_seeders():
 
     print("Seeding document templates...")
     seed_vision_scope_template()
+    seed_requirements_template()
+    
 
     print("Seeding completed successfully.")
 

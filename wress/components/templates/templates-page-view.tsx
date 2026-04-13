@@ -17,11 +17,13 @@ import usePermissions from "@/features/access/use-permissions"
 const ITEMS_PER_PAGE = 5
 const ACTION_MENU_WIDTH = 192
 
+type TemplateModule = "vision_scope" | "requirements"
+
 type TemplateForm = {
   id?: number
   name: string
   code: string
-  module: string
+  module: TemplateModule
   description: string
   is_active: boolean
   is_default: boolean
@@ -42,6 +44,17 @@ function makeTemplateCode(name: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
+}
+
+function getModuleLabel(module: string) {
+  switch (module) {
+    case "vision_scope":
+      return "Vision & Scope"
+    case "requirements":
+      return "Requirements"
+    default:
+      return module
+    }
 }
 
 export default function TemplatesPageView() {
@@ -67,6 +80,9 @@ export default function TemplatesPageView() {
   const [isAddMode, setIsAddMode] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
 
+  const [selectedModuleFilter, setSelectedModuleFilter] =
+    useState<"all" | TemplateModule>("all")
+
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
   const [menuPosition, setMenuPosition] = useState<{
     top: number
@@ -77,7 +93,12 @@ export default function TemplatesPageView() {
     try {
       setFetching(true)
       setMessage("")
-      const data = await getAdminTemplates("vision_scope")
+
+      const data =
+        selectedModuleFilter === "all"
+          ? await getAdminTemplates()
+          : await getAdminTemplates(selectedModuleFilter)
+
       setTemplates(data)
     } catch (error) {
       console.error("Failed to fetch templates:", error)
@@ -93,7 +114,8 @@ export default function TemplatesPageView() {
     } else if (!permissionsLoading && !canViewTemplates) {
       setFetching(false)
     }
-  }, [permissionsLoading, canViewTemplates])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissionsLoading, canViewTemplates, selectedModuleFilter])
 
   useEffect(() => {
     const handleOutsideClick = () => {
@@ -104,6 +126,10 @@ export default function TemplatesPageView() {
     window.addEventListener("click", handleOutsideClick)
     return () => window.removeEventListener("click", handleOutsideClick)
   }, [])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedModuleFilter])
 
   const totalPages = Math.max(1, Math.ceil(templates.length / ITEMS_PER_PAGE))
 
@@ -142,20 +168,26 @@ export default function TemplatesPageView() {
 
   const openAddModal = () => {
     if (!canCreateTemplates) return
+
     setIsAddMode(true)
-    setSelectedTemplate(emptyTemplate)
+    setSelectedTemplate({
+      ...emptyTemplate,
+      module:
+        selectedModuleFilter === "all" ? "vision_scope" : selectedModuleFilter,
+    })
     setMessage("")
     setIsModalOpen(true)
   }
 
   const openEditMetaModal = (template: DocumentTemplate) => {
     if (!canEditTemplates) return
+
     setIsAddMode(false)
     setSelectedTemplate({
       id: template.id,
       name: template.name,
       code: template.code,
-      module: template.module,
+      module: template.module as TemplateModule,
       description: template.description ?? "",
       is_active: template.is_active,
       is_default: template.is_default,
@@ -174,6 +206,7 @@ export default function TemplatesPageView() {
 
   const openDeleteModal = (template: DocumentTemplate) => {
     if (!canDeleteTemplates) return
+
     setTemplateToDelete(template)
     setIsDeleteModalOpen(true)
     setOpenMenuId(null)
@@ -198,6 +231,12 @@ export default function TemplatesPageView() {
           ? target.checked
           : target.value,
     }))
+  }
+
+  const handleModuleFilterChange = (
+    e: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    setSelectedModuleFilter(e.target.value as "all" | TemplateModule)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -331,22 +370,41 @@ export default function TemplatesPageView() {
 
   return (
     <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
-      <div className="mb-6 flex items-center justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Templates</h1>
+          <h1 className="text-2xl font-semibold text-foreground">
+            Document Templates
+          </h1>
           <p className="mt-2 text-muted-foreground">
-            Admins can manage Vision &amp; Scope templates for business analysts.
+            Admins can manage Vision &amp; Scope and Requirements templates for business analysts.
           </p>
         </div>
 
-        {canCreateTemplates && (
-          <button
-            onClick={openAddModal}
-            className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-          >
-            Add Template
-          </button>
-        )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-foreground">
+              Module Filter
+            </label>
+            <select
+              value={selectedModuleFilter}
+              onChange={handleModuleFilterChange}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+            >
+              <option value="all">All Modules</option>
+              <option value="vision_scope">Vision &amp; Scope</option>
+              <option value="requirements">Requirements</option>
+            </select>
+          </div>
+
+          {canCreateTemplates && (
+            <button
+              onClick={openAddModal}
+              className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+            >
+              Add Template
+            </button>
+          )}
+        </div>
       </div>
 
       {message && (
@@ -389,7 +447,9 @@ export default function TemplatesPageView() {
                       {template.name}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{template.code}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{template.module}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {getModuleLabel(template.module)}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {template.is_active ? "Active" : "Inactive"}
                     </td>
@@ -578,6 +638,7 @@ export default function TemplatesPageView() {
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="vision_scope">Vision &amp; Scope</option>
+                  <option value="requirements">Requirements</option>
                 </select>
               </div>
 
