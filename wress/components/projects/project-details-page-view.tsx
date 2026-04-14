@@ -78,7 +78,7 @@ type ProjectDocumentValue = {
   updated_at?: string
 }
 
-type VisionScopeDocument = {
+type ProjectDocument = {
   id: number
   project_id: number
   template_id: number
@@ -88,6 +88,18 @@ type VisionScopeDocument = {
   created_at: string
   updated_at: string
   values?: ProjectDocumentValue[]
+}
+
+type Requirement = {
+  id: number
+  requirement_id: string
+  title: string
+  priority: string
+  status: string
+  description?: string | null
+  rationale?: string | null
+  created_at: string
+  updated_at: string
 }
 
 type VersionIncrementType = "minor" | "major"
@@ -144,21 +156,57 @@ function getNextMajorVersion(version: string) {
   return `${major + 1}.0`
 }
 
+function parseOptions(optionsJson?: string | null): string[] {
+  if (!optionsJson) return []
+  try {
+    const parsed = JSON.parse(optionsJson)
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item))
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
+function formatDate(value: string) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return date.toLocaleDateString()
+}
+
+function normalizeRequirementId(value: string, fallbackId: number) {
+  const trimmed = (value || "").trim()
+
+  if (trimmed && !/^v\d+(\.\d+)*$/i.test(trimmed)) {
+    return trimmed
+  }
+
+  return `REQ-SPEC-${fallbackId}`
+}
+
 export default function ProjectDetailsPageView() {
   const params = useParams()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const projectId = params.id
+  const projectId = Number(params.id)
 
   const initialTab = searchParams.get("tab")
   const { loading: permissionsLoading, hasPermission } = usePermissions()
 
   const canViewProject = hasPermission("project.view")
   const canEditProject = hasPermission("project.edit")
+
   const canViewVisionScope = hasPermission("vision_scope.view")
   const canCreateVisionScope = hasPermission("vision_scope.create")
   const canEditVisionScope = hasPermission("vision_scope.edit")
   const canDeleteVisionScope = hasPermission("vision_scope.delete")
+
+  const canViewRequirements = hasPermission("requirements.view")
+  const canCreateRequirements = hasPermission("requirements.create")
+  const canEditRequirements = hasPermission("requirements.edit")
+  const canDeleteRequirements = hasPermission("requirements.delete")
 
   const [project, setProject] = useState<Project | null>(null)
   const [fetching, setFetching] = useState(true)
@@ -185,25 +233,24 @@ export default function ProjectDetailsPageView() {
     status: "Pending",
   })
 
-  const [template, setTemplate] = useState<DocumentTemplate | null>(null)
-  const [templateLoading, setTemplateLoading] = useState(false)
-
-  const [visionScopeDocuments, setVisionScopeDocuments] = useState<
-    VisionScopeDocument[]
-  >([])
+  const [visionScopeTemplate, setVisionScopeTemplate] = useState<DocumentTemplate | null>(null)
+  const [visionScopeTemplateLoading, setVisionScopeTemplateLoading] = useState(false)
+  const [visionScopeDocuments, setVisionScopeDocuments] = useState<ProjectDocument[]>([])
   const [selectedVisionScopeIds, setSelectedVisionScopeIds] = useState<number[]>([])
-  const [visionScopeToDelete, setVisionScopeToDelete] =
-    useState<VisionScopeDocument | null>(null)
-
+  const [visionScopeToDelete, setVisionScopeToDelete] = useState<ProjectDocument | null>(null)
   const [isVisionScopeFormOpen, setIsVisionScopeFormOpen] = useState(false)
-  const [isSaveVersionModalOpen, setIsSaveVersionModalOpen] = useState(false)
-
-  const [visionScopeVersion, setVisionScopeVersion] = useState("")
+  const [isSaveVisionScopeVersionModalOpen, setIsSaveVisionScopeVersionModalOpen] =
+    useState(false)
   const [visionScopeValues, setVisionScopeValues] = useState<Record<string, string>>({})
-  const [editingVisionScope, setEditingVisionScope] =
-    useState<VisionScopeDocument | null>(null)
+  const [editingVisionScope, setEditingVisionScope] = useState<ProjectDocument | null>(null)
+  const [openVisionScopeSections, setOpenVisionScopeSections] = useState<Record<number, boolean>>(
+    {}
+  )
 
-  const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
+  const [requirements, setRequirements] = useState<Requirement[]>([])
+  const [requirementsLoading, setRequirementsLoading] = useState(false)
+  const [requirementsSearch, setRequirementsSearch] = useState("")
+  const [requirementToDelete, setRequirementToDelete] = useState<Requirement | null>(null)
 
   const draftVisionScope = useMemo(
     () => visionScopeDocuments.find((doc) => doc.status === "Draft") || null,
@@ -228,15 +275,30 @@ export default function ProjectDetailsPageView() {
     [publishedVisionScopes]
   )
 
-  const getFieldValueFromDocument = (
-    document: VisionScopeDocument,
-    fieldId: number
-  ) => {
+  const filteredRequirements = useMemo(() => {
+    const keyword = requirementsSearch.trim().toLowerCase()
+
+    if (!keyword) return requirements
+
+    return requirements.filter((requirement) => {
+      return (
+        (requirement.requirement_id || "").toLowerCase().includes(keyword) ||
+        (requirement.title || "").toLowerCase().includes(keyword) ||
+        (requirement.priority || "").toLowerCase().includes(keyword) ||
+        (requirement.status || "").toLowerCase().includes(keyword)
+      )
+    })
+  }, [requirements, requirementsSearch])
+
+  const getFieldValueFromDocument = (document: ProjectDocument, fieldId: number) => {
     const value = document.values?.find((item) => item.template_field_id === fieldId)
     return value?.value_text || ""
   }
 
-  const buildVisionScopeValuesFromDocument = (document: VisionScopeDocument) => {
+  const buildValuesFromDocument = (
+    document: ProjectDocument,
+    template: DocumentTemplate | null
+  ) => {
     const values: Record<string, string> = {}
 
     if (!template) return values
@@ -250,13 +312,16 @@ export default function ProjectDetailsPageView() {
     return values
   }
 
-  const resetOpenSections = () => {
+  const resetOpenSections = (
+    template: DocumentTemplate | null,
+    setter: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+  ) => {
     if (!template) return
     const initialOpenSections: Record<number, boolean> = {}
     template.sections.forEach((section) => {
       initialOpenSections[section.id] = true
     })
-    setOpenSections(initialOpenSections)
+    setter(initialOpenSections)
   }
 
   const fetchProject = async () => {
@@ -294,7 +359,7 @@ export default function ProjectDetailsPageView() {
 
   const fetchVisionScopeTemplate = async () => {
     try {
-      setTemplateLoading(true)
+      setVisionScopeTemplateLoading(true)
 
       const res = await fetch(`${TEMPLATE_API_BASE_URL}/vision_scope/default`, {
         method: "GET",
@@ -309,18 +374,13 @@ export default function ProjectDetailsPageView() {
       }
 
       const fetchedTemplate: DocumentTemplate = data.template
-      setTemplate(fetchedTemplate)
-
-      const initialOpenSections: Record<number, boolean> = {}
-      fetchedTemplate.sections.forEach((section) => {
-        initialOpenSections[section.id] = true
-      })
-      setOpenSections(initialOpenSections)
+      setVisionScopeTemplate(fetchedTemplate)
+      resetOpenSections(fetchedTemplate, setOpenVisionScopeSections)
     } catch (error) {
       console.error("Failed to fetch Vision & Scope template:", error)
       setMessage("Failed to fetch Vision & Scope template")
     } finally {
-      setTemplateLoading(false)
+      setVisionScopeTemplateLoading(false)
     }
   }
 
@@ -345,6 +405,31 @@ export default function ProjectDetailsPageView() {
     }
   }
 
+  const fetchRequirements = async () => {
+    try {
+      setRequirementsLoading(true)
+
+      const res = await fetch(`${API_BASE_URL}/project/${projectId}/requirements`, {
+        method: "GET",
+        credentials: "include",
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to fetch requirements")
+        return
+      }
+
+      setRequirements(data.requirements || [])
+    } catch (error) {
+      console.error("Failed to fetch requirements:", error)
+      setMessage("Failed to fetch requirements")
+    } finally {
+      setRequirementsLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (!permissionsLoading && canViewProject && projectId) {
       fetchProject()
@@ -359,6 +444,12 @@ export default function ProjectDetailsPageView() {
       fetchVisionScopeDocuments()
     }
   }, [permissionsLoading, canViewVisionScope, projectId])
+
+  useEffect(() => {
+    if (!permissionsLoading && canViewRequirements && projectId) {
+      fetchRequirements()
+    }
+  }, [permissionsLoading, canViewRequirements, projectId])
 
   const handleProjectChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -417,68 +508,58 @@ export default function ProjectDetailsPageView() {
   }
 
   const openCreateVisionScopeForm = () => {
-    if (!template || (!canCreateVisionScope && !canEditVisionScope)) return
+    if (!visionScopeTemplate || (!canCreateVisionScope && !canEditVisionScope)) return
 
     const initialValues: Record<string, string> = {}
 
     if (draftVisionScope) {
-      Object.assign(initialValues, buildVisionScopeValuesFromDocument(draftVisionScope))
+      Object.assign(
+        initialValues,
+        buildValuesFromDocument(draftVisionScope, visionScopeTemplate)
+      )
       setEditingVisionScope(draftVisionScope)
-      setVisionScopeVersion(draftVisionScope.version || "Draft")
     } else if (latestVisionScope) {
-      Object.assign(initialValues, buildVisionScopeValuesFromDocument(latestVisionScope))
+      Object.assign(
+        initialValues,
+        buildValuesFromDocument(latestVisionScope, visionScopeTemplate)
+      )
       setEditingVisionScope(null)
-      setVisionScopeVersion(latestVisionScope.version)
     } else {
-      template.sections.forEach((section) => {
+      visionScopeTemplate.sections.forEach((section) => {
         section.fields.forEach((field) => {
           initialValues[field.key] = field.default_value || ""
         })
       })
       setEditingVisionScope(null)
-      setVisionScopeVersion("Draft")
     }
 
     setVisionScopeValues(initialValues)
     setIsVisionScopeFormOpen(true)
-    setIsSaveVersionModalOpen(false)
-    resetOpenSections()
+    setIsSaveVisionScopeVersionModalOpen(false)
+    resetOpenSections(visionScopeTemplate, setOpenVisionScopeSections)
     setMessage("")
   }
 
-  const openEditVisionScopeForm = (document: VisionScopeDocument) => {
-    if (!canEditVisionScope || !template) return
+  const openEditVisionScopeForm = (document: ProjectDocument) => {
+    if (!canEditVisionScope || !visionScopeTemplate) return
 
     setEditingVisionScope(document)
-    setVisionScopeValues(buildVisionScopeValuesFromDocument(document))
-    setVisionScopeVersion(document.status === "Draft" ? "Draft" : document.version)
+    setVisionScopeValues(buildValuesFromDocument(document, visionScopeTemplate))
     setIsVisionScopeFormOpen(true)
-    setIsSaveVersionModalOpen(false)
-    resetOpenSections()
+    setIsSaveVisionScopeVersionModalOpen(false)
+    resetOpenSections(visionScopeTemplate, setOpenVisionScopeSections)
     setMessage("")
   }
 
   const closeCreateVisionScopeForm = () => {
-    setVisionScopeVersion("")
     setVisionScopeValues({})
     setEditingVisionScope(null)
     setIsVisionScopeFormOpen(false)
-    setIsSaveVersionModalOpen(false)
-  }
-
-  const buildValuesPayload = () => {
-    if (!template) return []
-
-    return template.sections.flatMap((section) =>
-      section.fields.map((field) => ({
-        template_field_id: field.id,
-        value_text: visionScopeValues[field.key] || "",
-      }))
-    )
+    setIsSaveVisionScopeVersionModalOpen(false)
   }
 
   const saveVisionScopeDraft = async () => {
-    if (!template) {
+    if (!visionScopeTemplate) {
       setMessage("Template not found")
       return
     }
@@ -487,7 +568,12 @@ export default function ProjectDetailsPageView() {
     setMessage("")
 
     try {
-      const valuesPayload = buildValuesPayload()
+      const valuesPayload = visionScopeTemplate.sections.flatMap((section) =>
+        section.fields.map((field) => ({
+          template_field_id: field.id,
+          value_text: visionScopeValues[field.key] || "",
+        }))
+      )
 
       if (editingVisionScope?.status === "Draft") {
         const res = await fetch(
@@ -521,7 +607,7 @@ export default function ProjectDetailsPageView() {
           },
           credentials: "include",
           body: JSON.stringify({
-            template_id: template.id,
+            template_id: visionScopeTemplate.id,
             version: "Draft",
             status: "Draft",
             based_on_document_id: editingVisionScope?.id || latestVisionScope?.id || null,
@@ -550,7 +636,7 @@ export default function ProjectDetailsPageView() {
   }
 
   const saveVisionScopeVersion = async (incrementType: VersionIncrementType) => {
-    if (!template) {
+    if (!visionScopeTemplate) {
       setMessage("Template not found")
       return
     }
@@ -566,7 +652,12 @@ export default function ProjectDetailsPageView() {
           : getNextMinorVersion(baseVersion)
         : "1.0"
 
-      const valuesPayload = buildValuesPayload()
+      const valuesPayload = visionScopeTemplate.sections.flatMap((section) =>
+        section.fields.map((field) => ({
+          template_field_id: field.id,
+          value_text: visionScopeValues[field.key] || "",
+        }))
+      )
 
       if (editingVisionScope?.status === "Draft") {
         const res = await fetch(
@@ -601,7 +692,7 @@ export default function ProjectDetailsPageView() {
           },
           credentials: "include",
           body: JSON.stringify({
-            template_id: template.id,
+            template_id: visionScopeTemplate.id,
             version: computedVersion,
             status: "Published",
             based_on_document_id: latestVisionScope?.id || null,
@@ -624,7 +715,7 @@ export default function ProjectDetailsPageView() {
         )
       }
 
-      setIsSaveVersionModalOpen(false)
+      setIsSaveVisionScopeVersionModalOpen(false)
       closeCreateVisionScopeForm()
       await fetchVisionScopeDocuments()
     } catch (error) {
@@ -635,10 +726,10 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  const handleOpenPublishModal = async (e: React.FormEvent) => {
+  const handleOpenVisionScopePublishModal = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!template) {
+    if (!visionScopeTemplate) {
       setMessage("Template not found")
       return
     }
@@ -648,7 +739,7 @@ export default function ProjectDetailsPageView() {
       return
     }
 
-    setIsSaveVersionModalOpen(true)
+    setIsSaveVisionScopeVersionModalOpen(true)
   }
 
   const toggleVisionScopeSelection = (id: number) => {
@@ -705,11 +796,133 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  const toggleSection = (sectionId: number) => {
-    setOpenSections((prev) => ({
+  const confirmDeleteRequirement = async () => {
+    if (!requirementToDelete) return
+
+    try {
+      setLoading(true)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirements/${requirementToDelete.id}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to delete requirement")
+        return
+      }
+
+      setRequirementToDelete(null)
+      setMessage(data.message || "Requirement deleted successfully")
+      await fetchRequirements()
+    } catch (error) {
+      console.error("Failed to delete requirement:", error)
+      setMessage("Failed to delete requirement")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleVisionScopeSection = (sectionId: number) => {
+    setOpenVisionScopeSections((prev) => ({
       ...prev,
       [sectionId]: !prev[sectionId],
     }))
+  }
+
+  const renderDynamicField = (
+    field: TemplateField,
+    value: string,
+    onChangeValue: (fieldKey: string, value: string) => void
+  ) => {
+    const commonClassName =
+      "w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+
+    switch (field.field_type) {
+      case "textarea":
+        return (
+          <textarea
+            value={value}
+            onChange={(e) => onChangeValue(field.key, e.target.value)}
+            rows={4}
+            placeholder={field.placeholder || ""}
+            className={commonClassName}
+            required={field.is_required}
+          />
+        )
+
+      case "select": {
+        const options = parseOptions(field.options_json)
+        return (
+          <select
+            value={value}
+            onChange={(e) => onChangeValue(field.key, e.target.value)}
+            className={commonClassName}
+            required={field.is_required}
+          >
+            <option value="">Select an option</option>
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        )
+      }
+
+      case "number":
+        return (
+          <input
+            type="number"
+            value={value}
+            onChange={(e) => onChangeValue(field.key, e.target.value)}
+            placeholder={field.placeholder || ""}
+            className={commonClassName}
+            required={field.is_required}
+          />
+        )
+
+      case "date":
+        return (
+          <input
+            type="date"
+            value={value}
+            onChange={(e) => onChangeValue(field.key, e.target.value)}
+            className={commonClassName}
+            required={field.is_required}
+          />
+        )
+
+      case "checkbox":
+        return (
+          <label className="inline-flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={value === "true"}
+              onChange={(e) => onChangeValue(field.key, e.target.checked ? "true" : "false")}
+            />
+            {field.placeholder || field.label}
+          </label>
+        )
+
+      default:
+        return (
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChangeValue(field.key, e.target.value)}
+            placeholder={field.placeholder || ""}
+            className={commonClassName}
+            required={field.is_required}
+          />
+        )
+    }
   }
 
   const SectionToggleIcon = ({ isOpen }: { isOpen: boolean }) =>
@@ -994,10 +1207,10 @@ export default function ProjectDetailsPageView() {
               {!isVisionScopeFormOpen && (canCreateVisionScope || canEditVisionScope) && (
                 <button
                   onClick={openCreateVisionScopeForm}
-                  disabled={!template || templateLoading}
+                  disabled={!visionScopeTemplate || visionScopeTemplateLoading}
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
-                  {templateLoading
+                  {visionScopeTemplateLoading
                     ? "Loading Template..."
                     : draftVisionScope
                       ? "Continue Draft"
@@ -1008,7 +1221,7 @@ export default function ProjectDetailsPageView() {
               )}
             </div>
 
-            {isVisionScopeFormOpen && template && (
+            {isVisionScopeFormOpen && visionScopeTemplate && (
               <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
                 <div className="mb-4 flex items-center justify-between gap-4">
                   <div>
@@ -1025,7 +1238,7 @@ export default function ProjectDetailsPageView() {
                   </div>
                 </div>
 
-                <form onSubmit={handleOpenPublishModal} className="space-y-4">
+                <form onSubmit={handleOpenVisionScopePublishModal} className="space-y-4">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-foreground">
                       Current State
@@ -1047,11 +1260,11 @@ export default function ProjectDetailsPageView() {
                     </p>
                   </div>
 
-                  {template.sections.map((section) => (
+                  {visionScopeTemplate.sections.map((section) => (
                     <div key={section.id} className="rounded-xl border border-border">
                       <button
                         type="button"
-                        onClick={() => toggleSection(section.id)}
+                        onClick={() => toggleVisionScopeSection(section.id)}
                         className="flex w-full items-center justify-between px-4 py-3 text-left"
                       >
                         <div>
@@ -1062,10 +1275,10 @@ export default function ProjectDetailsPageView() {
                             </p>
                           )}
                         </div>
-                        <SectionToggleIcon isOpen={openSections[section.id]} />
+                        <SectionToggleIcon isOpen={openVisionScopeSections[section.id]} />
                       </button>
 
-                      {openSections[section.id] && (
+                      {openVisionScopeSections[section.id] && (
                         <div className="space-y-4 border-t border-border px-4 py-4">
                           {section.fields.map((field) => (
                             <div key={field.id}>
@@ -1076,28 +1289,10 @@ export default function ProjectDetailsPageView() {
                                 )}
                               </label>
 
-                              {field.field_type === "textarea" ? (
-                                <textarea
-                                  value={visionScopeValues[field.key] || ""}
-                                  onChange={(e) =>
-                                    handleDynamicVisionScopeChange(field.key, e.target.value)
-                                  }
-                                  rows={4}
-                                  placeholder={field.placeholder || ""}
-                                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                                  required={field.is_required}
-                                />
-                              ) : (
-                                <input
-                                  type="text"
-                                  value={visionScopeValues[field.key] || ""}
-                                  onChange={(e) =>
-                                    handleDynamicVisionScopeChange(field.key, e.target.value)
-                                  }
-                                  placeholder={field.placeholder || ""}
-                                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                                  required={field.is_required}
-                                />
+                              {renderDynamicField(
+                                field,
+                                visionScopeValues[field.key] || "",
+                                handleDynamicVisionScopeChange
                               )}
 
                               {field.help_text && (
@@ -1228,9 +1423,7 @@ export default function ProjectDetailsPageView() {
                         <button
                           type="button"
                           onClick={() =>
-                            router.push(
-                              `/project/${projectId}/vision-scope/${latestVisionScope.id}`
-                            )
+                            router.push(`/project/${projectId}/vision-scope/${latestVisionScope.id}`)
                           }
                           className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
                           title="View Latest Version"
@@ -1278,9 +1471,7 @@ export default function ProjectDetailsPageView() {
                       </div>
 
                       <div className="rounded-xl border border-border bg-card p-4">
-                        <p className="text-sm font-medium text-muted-foreground">
-                          Last Updated
-                        </p>
+                        <p className="text-sm font-medium text-muted-foreground">Last Updated</p>
                         <p className="mt-1 text-foreground">
                           {new Date(latestVisionScope.updated_at).toLocaleDateString()}
                         </p>
@@ -1326,8 +1517,7 @@ export default function ProjectDetailsPageView() {
                                 type="checkbox"
                                 checked={
                                   previousVisionScopes.length > 0 &&
-                                  selectedVisionScopeIds.length ===
-                                    previousVisionScopes.length
+                                  selectedVisionScopeIds.length === previousVisionScopes.length
                                 }
                                 onChange={toggleSelectAllVisionScopes}
                               />
@@ -1345,15 +1535,10 @@ export default function ProjectDetailsPageView() {
                               key={document.id}
                               className="cursor-pointer border-t border-border hover:bg-muted/30"
                               onClick={() =>
-                                router.push(
-                                  `/project/${projectId}/vision-scope/${document.id}`
-                                )
+                                router.push(`/project/${projectId}/vision-scope/${document.id}`)
                               }
                             >
-                              <td
-                                className="px-4 py-3"
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                              <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={selectedVisionScopeIds.includes(document.id)}
@@ -1373,17 +1558,12 @@ export default function ProjectDetailsPageView() {
                                 {new Date(document.updated_at).toLocaleDateString()}
                               </td>
 
-                              <td
-                                className="px-4 py-3"
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                              <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex items-center gap-2">
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      router.push(
-                                        `/project/${projectId}/vision-scope/${document.id}`
-                                      )
+                                      router.push(`/project/${projectId}/vision-scope/${document.id}`)
                                     }
                                     className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
                                     title="View Version"
@@ -1414,16 +1594,175 @@ export default function ProjectDetailsPageView() {
             )}
           </div>
         )
-      ) : (
+      ) : !canViewRequirements ? (
         <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
           <h2 className="text-xl font-semibold text-foreground">Requirements</h2>
           <p className="mt-2 text-muted-foreground">
-            Add project requirements here later.
+            You do not have permission to view requirements.
           </p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">Requirements</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Track and maintain project requirements.
+              </p>
+            </div>
+
+            {canCreateRequirements && (
+              <button
+                type="button"
+                onClick={() => router.push(`/project/${projectId}/requirements/create`)}
+                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+              >
+                Add Requirement
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="rounded-xl border border-border bg-background p-4">
+              <p className="text-sm font-medium text-muted-foreground">Total Requirements</p>
+              <p className="mt-1 text-lg font-semibold text-foreground">{requirements.length}</p>
+            </div>
+
+            <div className="w-full md:max-w-sm">
+              <input
+                type="text"
+                value={requirementsSearch}
+                onChange={(e) => setRequirementsSearch(e.target.value)}
+                placeholder="Search requirement ID, title, priority, or status..."
+                className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+
+          {requirementsLoading ? (
+            <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
+              Loading requirements...
+            </div>
+          ) : filteredRequirements.length === 0 ? (
+            <div className="rounded-2xl bg-background p-10 text-center ring-1 ring-border">
+              <div className="mb-4 flex justify-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                  <ClipboardList className="h-7 w-7 text-muted-foreground" />
+                </div>
+              </div>
+
+              <h3 className="text-base font-semibold text-foreground">
+                No Requirements yet
+              </h3>
+
+              <p className="mt-2 text-sm text-muted-foreground">
+                Start adding requirements one by one.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
+              <div className="border-b border-border px-6 py-4">
+                <h3 className="text-lg font-semibold text-foreground">Requirements Table</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Each row is one requirement record.
+                </p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-muted/40 text-left text-foreground">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Requirement ID</th>
+                      <th className="px-4 py-3 font-medium">Title</th>
+                      <th className="px-4 py-3 font-medium">Priority</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                      <th className="px-4 py-3 font-medium">Date Created</th>
+                      <th className="px-4 py-3 font-medium">Date Modified</th>
+                      <th className="w-40 px-4 py-3 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredRequirements.map((requirement) => (
+                      <tr
+                        key={requirement.id}
+                        className="border-t border-border hover:bg-muted/30"
+                      >
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          {normalizeRequirementId(requirement.requirement_id, requirement.id)}
+                        </td>
+
+                        <td className="px-4 py-3 text-foreground">
+                          {requirement.title || "-"}
+                        </td>
+
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {requirement.priority || "-"}
+                        </td>
+
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {requirement.status || "-"}
+                        </td>
+
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {formatDate(requirement.created_at)}
+                        </td>
+
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {formatDate(requirement.updated_at)}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                router.push(`/project/${projectId}/requirements/${requirement.id}`)
+                              }
+                              className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                              title="View Requirement"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+
+                            {canEditRequirements && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  router.push(
+                                    `/project/${projectId}/requirements/${requirement.id}/edit`
+                                  )
+                                }
+                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                                title="Edit Requirement"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            )}
+
+                            {canDeleteRequirements && (
+                              <button
+                                type="button"
+                                onClick={() => setRequirementToDelete(requirement)}
+                                className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                                title="Delete Requirement"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {isSaveVersionModalOpen && (
+      {isSaveVisionScopeVersionModalOpen && (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
@@ -1463,7 +1802,7 @@ export default function ProjectDetailsPageView() {
             <div className="mt-6 flex justify-end">
               <button
                 type="button"
-                onClick={() => setIsSaveVersionModalOpen(false)}
+                onClick={() => setIsSaveVisionScopeVersionModalOpen(false)}
                 className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
               >
                 Cancel
@@ -1502,6 +1841,46 @@ export default function ProjectDetailsPageView() {
               <button
                 type="button"
                 onClick={confirmDeleteVisionScope}
+                disabled={loading}
+                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
+              >
+                {loading ? "Deleting..." : "Confirm Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {requirementToDelete && canDeleteRequirements && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              Delete Requirement
+            </h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-foreground">
+                {normalizeRequirementId(
+                  requirementToDelete.requirement_id,
+                  requirementToDelete.id
+                )}
+              </span>
+              ? This action cannot be undone.
+            </p>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setRequirementToDelete(null)}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmDeleteRequirement}
                 disabled={loading}
                 className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
               >

@@ -10,6 +10,17 @@ type DynamicTemplateFormProps = {
   onChangeValue: (fieldKey: string, value: string) => void
 }
 
+function parseOptions(optionsJson?: string | null) {
+  if (!optionsJson) return []
+
+  try {
+    const parsed = JSON.parse(optionsJson)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export default function DynamicTemplateForm({
   template,
   values,
@@ -39,37 +50,64 @@ export default function DynamicTemplateForm({
 
           {openSections[section.id] && (
             <div className="space-y-4 border-t border-border px-4 py-4">
-              {section.fields.map((field) => (
-                <div key={field.id}>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
-                    {field.label}
-                  </label>
+              {section.fields.map((field) => {
+                const value = values[field.key] || ""
+                const options = parseOptions(field.options_json)
 
-                  {field.field_type === "textarea" ? (
-                    <textarea
-                      value={values[field.key] || ""}
-                      onChange={(e) => onChangeValue(field.key, e.target.value)}
-                      rows={4}
-                      placeholder={field.placeholder || ""}
-                      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                    />
-                  ) : (
-                    <input
-                      type="text"
-                      value={values[field.key] || ""}
-                      onChange={(e) => onChangeValue(field.key, e.target.value)}
-                      placeholder={field.placeholder || ""}
-                      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
-                    />
-                  )}
+                return (
+                  <div key={field.id}>
+                    <label className="mb-1 block text-sm font-medium text-foreground">
+                      {field.label}
+                      {field.is_required && <span className="ml-1 text-red-500">*</span>}
+                    </label>
 
-                  {field.help_text && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {field.help_text}
-                    </p>
-                  )}
-                </div>
-              ))}
+                    {field.field_type === "textarea" ? (
+                      <textarea
+                        value={value}
+                        onChange={(e) => onChangeValue(field.key, e.target.value)}
+                        rows={4}
+                        placeholder={field.placeholder || ""}
+                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                      />
+                    ) : field.field_type === "select" ? (
+                      <select
+                        value={value}
+                        onChange={(e) => onChangeValue(field.key, e.target.value)}
+                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                      >
+                        <option value="">Select an option</option>
+                        {options.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    ) : field.field_type === "number" ? (
+                      <input
+                        type="number"
+                        value={value}
+                        onChange={(e) => onChangeValue(field.key, e.target.value)}
+                        placeholder={field.placeholder || ""}
+                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => onChangeValue(field.key, e.target.value)}
+                        placeholder={field.placeholder || ""}
+                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-foreground"
+                      />
+                    )}
+
+                    {field.help_text && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {field.help_text}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
