@@ -1,11 +1,13 @@
 import TemplateEditorPageView from "@/components/templates/template-editor-page-view"
 
 type PageProps = {
-  params: {
+  params: Promise<{
     templateId: string
-  }
+  }>
 }
 
-export default function Page({ params }: PageProps) {
-  return <TemplateEditorPageView templateId={Number(params.templateId)} />
+export default async function Page({ params }: PageProps) {
+  const { templateId } = await params
+
+  return <TemplateEditorPageView templateId={Number(templateId)} />
 }

@@ -1,17 +1,19 @@
 import VisionScopeDetailsPageView from "@/components/projects/vision-scope-details-page-view"
 
 type PageProps = {
-  params: {
+  params: Promise<{
     id: string
     documentId: string
-  }
+  }>
 }
 
-export default function Page({ params }: PageProps) {
+export default async function Page({ params }: PageProps) {
+  const { id, documentId } = await params
+
   return (
     <VisionScopeDetailsPageView
-      projectId={Number(params.id)}
-      documentId={Number(params.documentId)}
+      projectId={Number(id)}
+      documentId={Number(documentId)}
     />
   )
 }

@@ -62,13 +62,20 @@ type VisionScopeDocument = {
   values?: ProjectDocumentValue[]
 }
 
+type DocumentContextResponse = {
+  document: VisionScopeDocument
+  template: DocumentTemplate | null
+  latest_default_template: DocumentTemplate | null
+  has_template_update: boolean
+  is_template_inactive?: boolean
+}
+
 type Props = {
   projectId: number
   documentId: number
 }
 
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
-const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
 function normalizeVersion(version: string) {
   return version.replace(/^v/i, "").trim()
@@ -123,8 +130,8 @@ export default function VisionScopeDetailsPageView({
       setFetching(true)
       setMessage("")
 
-      const [templateRes, docsRes] = await Promise.all([
-        fetch(`${TEMPLATE_API_BASE_URL}/vision_scope/default`, {
+      const [documentRes, docsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/project/${projectId}/documents/${documentId}`, {
           method: "GET",
           credentials: "include",
         }),
@@ -134,11 +141,11 @@ export default function VisionScopeDetailsPageView({
         }),
       ])
 
-      const templateData = await templateRes.json()
+      const documentData: DocumentContextResponse = await documentRes.json()
       const docsData = await docsRes.json()
 
-      if (!templateRes.ok) {
-        setMessage(templateData.message || "Failed to fetch template")
+      if (!documentRes.ok) {
+        setMessage((documentData as any).message || "Failed to fetch document")
         return
       }
 
@@ -147,20 +154,21 @@ export default function VisionScopeDetailsPageView({
         return
       }
 
-      const fetchedTemplate = templateData.template as DocumentTemplate
-      const sortedDocuments = [...(docsData.documents || [])].sort((a, b) =>
-        compareVersions(a.version, b.version)
-      )
+      if (!documentData.template) {
+        setMessage("Template not found for this document")
+        return
+      }
 
-      const fetchedDocument =
-        sortedDocuments.find((item: VisionScopeDocument) => item.id === documentId) || null
+      const sortedDocuments = [...(docsData.documents || [])]
+        .filter((item: VisionScopeDocument) => item.status !== "Draft")
+        .sort((a, b) => compareVersions(a.version, b.version))
 
-      setTemplate(fetchedTemplate)
+      setTemplate(documentData.template)
+      setDocument(documentData.document)
       setDocuments(sortedDocuments)
-      setDocument(fetchedDocument)
 
       const initialOpenSections: Record<number, boolean> = {}
-      fetchedTemplate.sections.forEach((section) => {
+      documentData.template.sections.forEach((section) => {
         initialOpenSections[section.id] = true
       })
       setOpenSections(initialOpenSections)
@@ -250,6 +258,9 @@ export default function VisionScopeDetailsPageView({
               Created {new Date(document.created_at).toLocaleDateString()} · Updated{" "}
               {new Date(document.updated_at).toLocaleDateString()}
             </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Template used: <span className="font-medium text-foreground">{template.name}</span>
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -257,9 +268,7 @@ export default function VisionScopeDetailsPageView({
               <button
                 type="button"
                 onClick={() =>
-                  router.push(
-                    `/project/${projectId}/vision-scope/${latestVisionScope.id}`
-                  )
+                  router.push(`/project/${projectId}/vision-scope/${latestVisionScope.id}`)
                 }
                 className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
               >
@@ -271,9 +280,7 @@ export default function VisionScopeDetailsPageView({
             {canEditVisionScope && (
               <button
                 type="button"
-                onClick={() =>
-                  router.push(`/project/${projectId}?tab=vision-scope`)
-                }
+                onClick={() => router.push(`/project/${projectId}?tab=vision-scope`)}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               >
                 <Pencil className="h-4 w-4" />
@@ -330,9 +337,7 @@ export default function VisionScopeDetailsPageView({
                 <div>
                   <p className="font-medium text-foreground">{section.title}</p>
                   {section.description && (
-                    <p className="text-sm text-muted-foreground">
-                      {section.description}
-                    </p>
+                    <p className="text-sm text-muted-foreground">{section.description}</p>
                   )}
                 </div>
                 <SectionToggleIcon isOpen={openSections[section.id]} />
@@ -351,9 +356,7 @@ export default function VisionScopeDetailsPageView({
                       </div>
 
                       {field.help_text && (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          {field.help_text}
-                        </p>
+                        <p className="mt-2 text-xs text-muted-foreground">{field.help_text}</p>
                       )}
                     </div>
                   ))}

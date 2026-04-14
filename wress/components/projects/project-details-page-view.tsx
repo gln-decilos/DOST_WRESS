@@ -104,6 +104,29 @@ type Requirement = {
 
 type VersionIncrementType = "minor" | "major"
 
+type DocumentContextResponse = {
+  document: ProjectDocument
+  template: DocumentTemplate | null
+  latest_default_template: DocumentTemplate | null
+  has_template_update: boolean
+}
+
+type TemplateSwitchPreview = {
+  values: Array<{
+    template_field_id: number
+    value_text: string
+    field_key: string
+    field_label: string
+    is_transferred: boolean
+  }>
+  transferred_count: number
+  unmatched_old_fields: string[]
+  new_empty_fields: Array<{
+    field_key: string
+    field_label: string
+  }>
+}
+
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
@@ -233,19 +256,23 @@ export default function ProjectDetailsPageView() {
     status: "Pending",
   })
 
+  const [defaultVisionScopeTemplate, setDefaultVisionScopeTemplate] = useState<DocumentTemplate | null>(null)
   const [visionScopeTemplate, setVisionScopeTemplate] = useState<DocumentTemplate | null>(null)
   const [visionScopeTemplateLoading, setVisionScopeTemplateLoading] = useState(false)
   const [visionScopeDocuments, setVisionScopeDocuments] = useState<ProjectDocument[]>([])
   const [selectedVisionScopeIds, setSelectedVisionScopeIds] = useState<number[]>([])
   const [visionScopeToDelete, setVisionScopeToDelete] = useState<ProjectDocument | null>(null)
   const [isVisionScopeFormOpen, setIsVisionScopeFormOpen] = useState(false)
-  const [isSaveVisionScopeVersionModalOpen, setIsSaveVisionScopeVersionModalOpen] =
-    useState(false)
+  const [isSaveVisionScopeVersionModalOpen, setIsSaveVisionScopeVersionModalOpen] = useState(false)
   const [visionScopeValues, setVisionScopeValues] = useState<Record<string, string>>({})
   const [editingVisionScope, setEditingVisionScope] = useState<ProjectDocument | null>(null)
-  const [openVisionScopeSections, setOpenVisionScopeSections] = useState<Record<number, boolean>>(
-    {}
-  )
+  const [baseVisionScopeDocument, setBaseVisionScopeDocument] = useState<ProjectDocument | null>(null)
+  const [openVisionScopeSections, setOpenVisionScopeSections] = useState<Record<number, boolean>>({})
+
+  const [isTemplateSwitchModalOpen, setIsTemplateSwitchModalOpen] = useState(false)
+  const [templateSwitchSourceTemplate, setTemplateSwitchSourceTemplate] = useState<DocumentTemplate | null>(null)
+  const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] = useState<DocumentTemplate | null>(null)
+  const [templateSwitchPreview, setTemplateSwitchPreview] = useState<TemplateSwitchPreview | null>(null)
 
   const [requirements, setRequirements] = useState<Requirement[]>([])
   const [requirementsLoading, setRequirementsLoading] = useState(false)
@@ -290,7 +317,10 @@ export default function ProjectDetailsPageView() {
     })
   }, [requirements, requirementsSearch])
 
-  const getFieldValueFromDocument = (document: ProjectDocument, fieldId: number) => {
+  const getFieldValueFromDocument = (
+    document: ProjectDocument,
+    fieldId: number
+  ) => {
     const value = document.values?.find((item) => item.template_field_id === fieldId)
     return value?.value_text || ""
   }
@@ -306,6 +336,39 @@ export default function ProjectDetailsPageView() {
     template.sections.forEach((section) => {
       section.fields.forEach((field) => {
         values[field.key] = getFieldValueFromDocument(document, field.id)
+      })
+    })
+
+    return values
+  }
+
+  const buildValuesFromTemplateDefaults = (template: DocumentTemplate | null) => {
+    const values: Record<string, string> = {}
+
+    if (!template) return values
+
+    template.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        values[field.key] = field.default_value || ""
+      })
+    })
+
+    return values
+  }
+
+  const buildValuesFromSwitchPreview = (
+    template: DocumentTemplate,
+    preview: TemplateSwitchPreview
+  ) => {
+    const previewByFieldId = new Map(
+      preview.values.map((item) => [item.template_field_id, item.value_text])
+    )
+
+    const values: Record<string, string> = {}
+
+    template.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        values[field.key] = previewByFieldId.get(field.id) || field.default_value || ""
       })
     })
 
@@ -374,8 +437,12 @@ export default function ProjectDetailsPageView() {
       }
 
       const fetchedTemplate: DocumentTemplate = data.template
-      setVisionScopeTemplate(fetchedTemplate)
-      resetOpenSections(fetchedTemplate, setOpenVisionScopeSections)
+      setDefaultVisionScopeTemplate(fetchedTemplate)
+
+      if (!visionScopeTemplate) {
+        setVisionScopeTemplate(fetchedTemplate)
+        resetOpenSections(fetchedTemplate, setOpenVisionScopeSections)
+      }
     } catch (error) {
       console.error("Failed to fetch Vision & Scope template:", error)
       setMessage("Failed to fetch Vision & Scope template")
@@ -507,55 +574,213 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  const openCreateVisionScopeForm = () => {
-    if (!visionScopeTemplate || (!canCreateVisionScope && !canEditVisionScope)) return
-
-    const initialValues: Record<string, string> = {}
-
-    if (draftVisionScope) {
-      Object.assign(
-        initialValues,
-        buildValuesFromDocument(draftVisionScope, visionScopeTemplate)
-      )
-      setEditingVisionScope(draftVisionScope)
-    } else if (latestVisionScope) {
-      Object.assign(
-        initialValues,
-        buildValuesFromDocument(latestVisionScope, visionScopeTemplate)
-      )
-      setEditingVisionScope(null)
-    } else {
-      visionScopeTemplate.sections.forEach((section) => {
-        section.fields.forEach((field) => {
-          initialValues[field.key] = field.default_value || ""
-        })
-      })
-      setEditingVisionScope(null)
-    }
-
-    setVisionScopeValues(initialValues)
+  const openFormWithTemplate = (
+    template: DocumentTemplate,
+    values: Record<string, string>,
+    baseDocument: ProjectDocument | null,
+    editingDocument: ProjectDocument | null
+  ) => {
+    setVisionScopeTemplate(template)
+    setVisionScopeValues(values)
+    setBaseVisionScopeDocument(baseDocument)
+    setEditingVisionScope(editingDocument)
     setIsVisionScopeFormOpen(true)
     setIsSaveVisionScopeVersionModalOpen(false)
-    resetOpenSections(visionScopeTemplate, setOpenVisionScopeSections)
+    resetOpenSections(template, setOpenVisionScopeSections)
     setMessage("")
   }
 
-  const openEditVisionScopeForm = (document: ProjectDocument) => {
-    if (!canEditVisionScope || !visionScopeTemplate) return
+  const openCreateVisionScopeForm = async () => {
+    if ((!canCreateVisionScope && !canEditVisionScope) || !defaultVisionScopeTemplate) return
 
-    setEditingVisionScope(document)
-    setVisionScopeValues(buildValuesFromDocument(document, visionScopeTemplate))
-    setIsVisionScopeFormOpen(true)
-    setIsSaveVisionScopeVersionModalOpen(false)
-    resetOpenSections(visionScopeTemplate, setOpenVisionScopeSections)
     setMessage("")
+
+    // continue draft
+    if (draftVisionScope) {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/project/${projectId}/documents/${draftVisionScope.id}`,
+          {
+            method: "GET",
+            credentials: "include",
+          }
+        )
+
+        const data: DocumentContextResponse = await res.json()
+
+        if (!res.ok || !data.template) {
+          setMessage((data as any).message || "Failed to load draft document")
+          return
+        }
+
+        openFormWithTemplate(
+          data.template,
+          buildValuesFromDocument(data.document, data.template),
+          data.document,
+          data.document
+        )
+      } catch (error) {
+        console.error("Failed to load draft document:", error)
+        setMessage("Failed to load draft document")
+      }
+      return
+    }
+
+    // create first document
+    if (!latestVisionScope) {
+      openFormWithTemplate(
+        defaultVisionScopeTemplate,
+        buildValuesFromTemplateDefaults(defaultVisionScopeTemplate),
+        null,
+        null
+      )
+      return
+    }
+
+    // create new draft from latest published
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/documents/${latestVisionScope.id}`,
+        {
+          method: "GET",
+          credentials: "include",
+        }
+      )
+
+      const data: DocumentContextResponse = await res.json()
+
+      if (!res.ok || !data.template) {
+        setMessage((data as any).message || "Failed to load latest Vision & Scope")
+        return
+      }
+
+      if (
+        data.has_template_update &&
+        data.latest_default_template &&
+        data.template.id !== data.latest_default_template.id
+      ) {
+        const previewRes = await fetch(
+          `${API_BASE_URL}/project/${projectId}/documents/${latestVisionScope.id}/template-switch-preview?target_template_id=${data.latest_default_template.id}`,
+          {
+            method: "GET",
+            credentials: "include",
+          }
+        )
+
+        const previewData = await previewRes.json()
+
+        if (!previewRes.ok) {
+          setMessage(previewData.message || "Failed to load template switch preview")
+          return
+        }
+
+        setBaseVisionScopeDocument(data.document)
+        setTemplateSwitchSourceTemplate(data.template)
+        setTemplateSwitchTargetTemplate(data.latest_default_template)
+        setTemplateSwitchPreview(previewData.preview)
+        setIsTemplateSwitchModalOpen(true)
+        return
+      }
+
+      openFormWithTemplate(
+        data.template,
+        buildValuesFromDocument(data.document, data.template),
+        data.document,
+        null
+      )
+    } catch (error) {
+      console.error("Failed to prepare Vision & Scope form:", error)
+      setMessage("Failed to prepare Vision & Scope form")
+    }
+  }
+
+  const openEditVisionScopeForm = async (document: ProjectDocument) => {
+    if (!canEditVisionScope) return
+
+    try {
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/documents/${document.id}`,
+        {
+          method: "GET",
+          credentials: "include",
+        }
+      )
+
+      const data: DocumentContextResponse = await res.json()
+
+      if (!res.ok || !data.template) {
+        setMessage((data as any).message || "Failed to load document")
+        return
+      }
+
+      openFormWithTemplate(
+        data.template,
+        buildValuesFromDocument(data.document, data.template),
+        data.document,
+        data.document.status === "Draft" ? data.document : null
+      )
+    } catch (error) {
+      console.error("Failed to load document:", error)
+      setMessage("Failed to load document")
+    }
+  }
+
+  const handleKeepCurrentTemplate = () => {
+    if (!templateSwitchSourceTemplate || !baseVisionScopeDocument) return
+
+    openFormWithTemplate(
+      templateSwitchSourceTemplate,
+      buildValuesFromDocument(baseVisionScopeDocument, templateSwitchSourceTemplate),
+      baseVisionScopeDocument,
+      null
+    )
+
+    setIsTemplateSwitchModalOpen(false)
+    setTemplateSwitchSourceTemplate(null)
+    setTemplateSwitchTargetTemplate(null)
+    setTemplateSwitchPreview(null)
+  }
+
+  const handleSwitchToLatestTemplate = () => {
+    if (!templateSwitchTargetTemplate || !templateSwitchPreview || !baseVisionScopeDocument) return
+
+    const transferredValues = buildValuesFromSwitchPreview(
+      templateSwitchTargetTemplate,
+      templateSwitchPreview
+    )
+
+    openFormWithTemplate(
+      templateSwitchTargetTemplate,
+      transferredValues,
+      baseVisionScopeDocument,
+      null
+    )
+
+    setIsTemplateSwitchModalOpen(false)
+    setTemplateSwitchSourceTemplate(null)
+    setTemplateSwitchTargetTemplate(null)
+    setTemplateSwitchPreview(null)
   }
 
   const closeCreateVisionScopeForm = () => {
     setVisionScopeValues({})
     setEditingVisionScope(null)
+    setBaseVisionScopeDocument(null)
     setIsVisionScopeFormOpen(false)
     setIsSaveVisionScopeVersionModalOpen(false)
+  }
+
+  const buildCurrentTemplateValuesPayload = () => {
+    if (!visionScopeTemplate) return []
+
+    return visionScopeTemplate.sections.flatMap((section) =>
+      section.fields.map((field) => ({
+        template_field_id: field.id,
+        value_text: visionScopeValues[field.key] || "",
+      }))
+    )
   }
 
   const saveVisionScopeDraft = async () => {
@@ -568,12 +793,7 @@ export default function ProjectDetailsPageView() {
     setMessage("")
 
     try {
-      const valuesPayload = visionScopeTemplate.sections.flatMap((section) =>
-        section.fields.map((field) => ({
-          template_field_id: field.id,
-          value_text: visionScopeValues[field.key] || "",
-        }))
-      )
+      const valuesPayload = buildCurrentTemplateValuesPayload()
 
       if (editingVisionScope?.status === "Draft") {
         const res = await fetch(
@@ -585,6 +805,7 @@ export default function ProjectDetailsPageView() {
             },
             credentials: "include",
             body: JSON.stringify({
+              template_id: visionScopeTemplate.id,
               status: "Draft",
               values: valuesPayload,
             }),
@@ -610,7 +831,7 @@ export default function ProjectDetailsPageView() {
             template_id: visionScopeTemplate.id,
             version: "Draft",
             status: "Draft",
-            based_on_document_id: editingVisionScope?.id || latestVisionScope?.id || null,
+            based_on_document_id: baseVisionScopeDocument?.id || null,
             values: valuesPayload,
           }),
         })
@@ -646,18 +867,24 @@ export default function ProjectDetailsPageView() {
 
     try {
       const baseVersion = latestVisionScope?.version || "1.0"
-      const computedVersion = latestVisionScope
-        ? incrementType === "major"
-          ? getNextMajorVersion(baseVersion)
-          : getNextMinorVersion(baseVersion)
-        : "1.0"
 
-      const valuesPayload = visionScopeTemplate.sections.flatMap((section) =>
-        section.fields.map((field) => ({
-          template_field_id: field.id,
-          value_text: visionScopeValues[field.key] || "",
-        }))
-      )
+      const templateChanged =
+        !!baseVisionScopeDocument && baseVisionScopeDocument.template_id !== visionScopeTemplate.id
+
+      let computedVersion = "1.0"
+
+      if (!latestVisionScope) {
+        computedVersion = "1.0"
+      } else if (templateChanged) {
+        computedVersion = getNextMajorVersion(baseVersion)
+      } else {
+        computedVersion =
+          incrementType === "major"
+            ? getNextMajorVersion(baseVersion)
+            : getNextMinorVersion(baseVersion)
+      }
+
+      const valuesPayload = buildCurrentTemplateValuesPayload()
 
       if (editingVisionScope?.status === "Draft") {
         const res = await fetch(
@@ -669,6 +896,7 @@ export default function ProjectDetailsPageView() {
             },
             credentials: "include",
             body: JSON.stringify({
+              template_id: visionScopeTemplate.id,
               version: computedVersion,
               status: "Published",
               values: valuesPayload,
@@ -695,7 +923,7 @@ export default function ProjectDetailsPageView() {
             template_id: visionScopeTemplate.id,
             version: computedVersion,
             status: "Published",
-            based_on_document_id: latestVisionScope?.id || null,
+            based_on_document_id: baseVisionScopeDocument?.id || latestVisionScope?.id || null,
             values: valuesPayload,
           }),
         })
@@ -982,10 +1210,7 @@ export default function ProjectDetailsPageView() {
       )}
 
       <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-border pb-4">
-        <button
-          onClick={() => setActiveTab("overview")}
-          className={tabButtonClasses("overview")}
-        >
+        <button onClick={() => setActiveTab("overview")} className={tabButtonClasses("overview")}>
           Overview
         </button>
 
@@ -1069,9 +1294,7 @@ export default function ProjectDetailsPageView() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">
-                  Status
-                </label>
+                <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
                 <select
                   name="status"
                   value={projectForm.status}
@@ -1182,9 +1405,7 @@ export default function ProjectDetailsPageView() {
       ) : activeTab === "stakeholders" ? (
         <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
           <h2 className="text-xl font-semibold text-foreground">Stakeholders</h2>
-          <p className="mt-2 text-muted-foreground">
-            Add stakeholder list here later.
-          </p>
+          <p className="mt-2 text-muted-foreground">Add stakeholder list here later.</p>
         </div>
       ) : activeTab === "vision-scope" ? (
         !canViewVisionScope ? (
@@ -1207,7 +1428,7 @@ export default function ProjectDetailsPageView() {
               {!isVisionScopeFormOpen && (canCreateVisionScope || canEditVisionScope) && (
                 <button
                   onClick={openCreateVisionScopeForm}
-                  disabled={!visionScopeTemplate || visionScopeTemplateLoading}
+                  disabled={!defaultVisionScopeTemplate || visionScopeTemplateLoading}
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
                   {visionScopeTemplateLoading
@@ -1235,29 +1456,43 @@ export default function ProjectDetailsPageView() {
                     <p className="mt-1 text-sm text-muted-foreground">
                       Drafts stay editable until you publish them as a version.
                     </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Using template: <span className="font-medium text-foreground">{visionScopeTemplate.name}</span>
+                    </p>
                   </div>
                 </div>
 
                 <form onSubmit={handleOpenVisionScopePublishModal} className="space-y-4">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-foreground">
-                      Current State
-                    </label>
-                    <input
-                      type="text"
-                      value={
-                        editingVisionScope?.status === "Draft"
-                          ? "Draft"
-                          : latestVisionScope
-                            ? `Based on version ${latestVisionScope.version}`
-                            : "New draft"
-                      }
-                      readOnly
-                      className="w-full cursor-not-allowed rounded-lg border border-border bg-muted px-3 py-2 text-foreground"
-                    />
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Draft does not create a version yet. Publish when ready.
-                    </p>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-foreground">
+                        Current State
+                      </label>
+                      <input
+                        type="text"
+                        value={
+                          editingVisionScope?.status === "Draft"
+                            ? "Draft"
+                            : latestVisionScope
+                              ? `Based on version ${latestVisionScope.version}`
+                              : "New draft"
+                        }
+                        readOnly
+                        className="w-full cursor-not-allowed rounded-lg border border-border bg-muted px-3 py-2 text-foreground"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-foreground">
+                        Template
+                      </label>
+                      <input
+                        type="text"
+                        value={visionScopeTemplate.name}
+                        readOnly
+                        className="w-full cursor-not-allowed rounded-lg border border-border bg-muted px-3 py-2 text-foreground"
+                      />
+                    </div>
                   </div>
 
                   {visionScopeTemplate.sections.map((section) => (
@@ -1270,9 +1505,7 @@ export default function ProjectDetailsPageView() {
                         <div>
                           <p className="font-medium text-foreground">{section.title}</p>
                           {section.description && (
-                            <p className="text-sm text-muted-foreground">
-                              {section.description}
-                            </p>
+                            <p className="text-sm text-muted-foreground">{section.description}</p>
                           )}
                         </div>
                         <SectionToggleIcon isOpen={openVisionScopeSections[section.id]} />
@@ -1284,9 +1517,7 @@ export default function ProjectDetailsPageView() {
                             <div key={field.id}>
                               <label className="mb-1 block text-sm font-medium text-foreground">
                                 {field.label}
-                                {field.is_required && (
-                                  <span className="ml-1 text-red-500">*</span>
-                                )}
+                                {field.is_required && <span className="ml-1 text-red-500">*</span>}
                               </label>
 
                               {renderDynamicField(
@@ -1343,9 +1574,7 @@ export default function ProjectDetailsPageView() {
                   <div className="rounded-2xl bg-amber-50 p-6 ring-1 ring-amber-200">
                     <div className="mb-4 flex items-start justify-between gap-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-amber-900">
-                          Draft in Progress
-                        </h3>
+                        <h3 className="text-lg font-semibold text-amber-900">Draft in Progress</h3>
                         <p className="mt-1 text-sm text-amber-800">
                           This draft is still editable and has not been published as a version.
                         </p>
@@ -1491,8 +1720,7 @@ export default function ProjectDetailsPageView() {
                     </h3>
 
                     <p className="mt-2 text-sm text-muted-foreground">
-                      Start defining your project vision and scope to guide requirement
-                      development.
+                      Start defining your project vision and scope to guide requirement development.
                     </p>
                   </div>
                 ) : null}
@@ -1500,9 +1728,7 @@ export default function ProjectDetailsPageView() {
                 {previousVisionScopes.length > 0 && (
                   <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
                     <div className="border-b border-border px-6 py-4">
-                      <h3 className="text-lg font-semibold text-foreground">
-                        Previous Versions
-                      </h3>
+                      <h3 className="text-lg font-semibold text-foreground">Previous Versions</h3>
                       <p className="mt-1 text-sm text-muted-foreground">
                         View earlier published versions of the Vision & Scope document.
                       </p>
@@ -1651,9 +1877,7 @@ export default function ProjectDetailsPageView() {
                 </div>
               </div>
 
-              <h3 className="text-base font-semibold text-foreground">
-                No Requirements yet
-              </h3>
+              <h3 className="text-base font-semibold text-foreground">No Requirements yet</h3>
 
               <p className="mt-2 text-sm text-muted-foreground">
                 Start adding requirements one by one.
@@ -1684,17 +1908,12 @@ export default function ProjectDetailsPageView() {
 
                   <tbody>
                     {filteredRequirements.map((requirement) => (
-                      <tr
-                        key={requirement.id}
-                        className="border-t border-border hover:bg-muted/30"
-                      >
+                      <tr key={requirement.id} className="border-t border-border hover:bg-muted/30">
                         <td className="px-4 py-3 font-medium text-foreground">
                           {normalizeRequirementId(requirement.requirement_id, requirement.id)}
                         </td>
 
-                        <td className="px-4 py-3 text-foreground">
-                          {requirement.title || "-"}
-                        </td>
+                        <td className="px-4 py-3 text-foreground">{requirement.title || "-"}</td>
 
                         <td className="px-4 py-3 text-muted-foreground">
                           {requirement.priority || "-"}
@@ -1762,12 +1981,141 @@ export default function ProjectDetailsPageView() {
         </div>
       )}
 
+      {isTemplateSwitchModalOpen && templateSwitchSourceTemplate && templateSwitchTargetTemplate && templateSwitchPreview && (
+  <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+    <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+      <h3 className="text-lg font-semibold text-foreground">
+        A newer template is available
+      </h3>
+
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+        This document is currently using{" "}
+        <span className="font-medium text-foreground">
+          {templateSwitchSourceTemplate.name}
+        </span>
+        . A newer template,{" "}
+        <span className="font-medium text-foreground">
+          {templateSwitchTargetTemplate.name}
+        </span>
+        , is now available.
+      </p>
+
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+        You can continue using your current template, or switch to the newer one.
+        If you switch, matching information will be carried over automatically.
+      </p>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            Information carried over
+          </p>
+          <p className="mt-1 text-lg font-semibold text-foreground">
+            {templateSwitchPreview.transferred_count}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            Information that won’t be included
+          </p>
+          <p className="mt-1 text-lg font-semibold text-foreground">
+            {templateSwitchPreview.unmatched_old_fields.length}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            New information to fill in
+          </p>
+          <p className="mt-1 text-lg font-semibold text-foreground">
+            {templateSwitchPreview.new_empty_fields.length}
+          </p>
+        </div>
+      </div>
+
+      {templateSwitchPreview.unmatched_old_fields.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-900">
+            Some information from your current template is not part of the newer template
+          </p>
+          <p className="mt-1 text-xs text-amber-800">
+            This information will not be carried over if you switch.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {templateSwitchPreview.unmatched_old_fields.map((fieldKey) => (
+              <span
+                key={fieldKey}
+                className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
+              >
+                {fieldKey}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {templateSwitchPreview.new_empty_fields.length > 0 && (
+        <div className="mt-4 rounded-xl border border-border bg-background p-4">
+          <p className="text-sm font-medium text-foreground">
+            New information you may need to complete
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            You can review and fill these in after switching templates.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {templateSwitchPreview.new_empty_fields.map((field) => (
+              <span
+                key={field.field_key}
+                className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground"
+              >
+                {field.field_label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-6 flex flex-wrap justify-end gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            setIsTemplateSwitchModalOpen(false)
+            setTemplateSwitchSourceTemplate(null)
+            setTemplateSwitchTargetTemplate(null)
+            setTemplateSwitchPreview(null)
+          }}
+          className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={handleKeepCurrentTemplate}
+          className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+        >
+          Keep current template
+        </button>
+
+        <button
+          type="button"
+          onClick={handleSwitchToLatestTemplate}
+          className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+        >
+          Use newer template
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
       {isSaveVisionScopeVersionModalOpen && (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">
-              Save as Published Version
-            </h3>
+            <h3 className="text-lg font-semibold text-foreground">Save as Published Version</h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
               Choose how the system should version this Vision & Scope document.
@@ -1822,9 +2170,7 @@ export default function ProjectDetailsPageView() {
             <p className="mt-3 text-sm text-muted-foreground">
               Are you sure you want to delete{" "}
               <span className="font-semibold text-foreground">
-                {visionScopeToDelete.status === "Draft"
-                  ? "this draft"
-                  : visionScopeToDelete.version}
+                {visionScopeToDelete.status === "Draft" ? "this draft" : visionScopeToDelete.version}
               </span>
               ? This action cannot be undone.
             </p>
@@ -1854,17 +2200,12 @@ export default function ProjectDetailsPageView() {
       {requirementToDelete && canDeleteRequirements && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">
-              Delete Requirement
-            </h3>
+            <h3 className="text-lg font-semibold text-foreground">Delete Requirement</h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
               Are you sure you want to delete{" "}
               <span className="font-semibold text-foreground">
-                {normalizeRequirementId(
-                  requirementToDelete.requirement_id,
-                  requirementToDelete.id
-                )}
+                {normalizeRequirementId(requirementToDelete.requirement_id, requirementToDelete.id)}
               </span>
               ? This action cannot be undone.
             </p>
