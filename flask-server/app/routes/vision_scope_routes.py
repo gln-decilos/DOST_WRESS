@@ -12,19 +12,24 @@ vision_scope_bp = Blueprint("vision_scope", __name__)
 @vision_scope_bp.route("/project/<int:project_id>/documents", methods=["GET"])
 @require_permission("vision_scope.view")
 def get_project_vision_scope_documents(project_id):
-    template = DocumentTemplate.query.filter_by(
-        module="vision_scope",
-        is_default=True,
-        is_active=True
-    ).first()
+    vision_scope_templates = DocumentTemplate.query.filter_by(
+        module="vision_scope"
+    ).all()
 
-    if not template:
+    template_ids = [template.id for template in vision_scope_templates]
+
+    if not template_ids:
         return jsonify({"documents": []}), 200
 
-    documents = ProjectDocument.query.filter_by(
-        project_id=project_id,
-        template_id=template.id
-    ).order_by(ProjectDocument.updated_at.desc()).all()
+    documents = (
+        ProjectDocument.query
+        .filter(
+            ProjectDocument.project_id == project_id,
+            ProjectDocument.template_id.in_(template_ids)
+        )
+        .order_by(ProjectDocument.updated_at.desc())
+        .all()
+    )
 
     return jsonify({
         "documents": [doc.to_dict(include_values=True) for doc in documents]
