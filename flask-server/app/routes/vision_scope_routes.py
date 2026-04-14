@@ -9,6 +9,104 @@ from app.utils.permissions import require_permission
 vision_scope_bp = Blueprint("vision_scope", __name__)
 
 
+def get_template_field_maps(template):
+    field_by_id = {}
+    field_by_key = {}
+
+    if not template:
+        return field_by_id, field_by_key
+
+    for section in template.sections:
+        for field in section.fields:
+            field_by_id[field.id] = field
+            field_by_key[field.key] = field
+
+    return field_by_id, field_by_key
+
+
+def build_document_values_by_key(document, template):
+    values_by_key = {}
+
+    if not document or not template:
+        return values_by_key
+
+    field_by_id, _ = get_template_field_maps(template)
+
+    for value in document.values:
+        field = field_by_id.get(value.template_field_id)
+        if not field:
+            continue
+        values_by_key[field.key] = value.value_text or ""
+
+    return values_by_key
+
+
+def build_template_values_payload_from_document(source_document, source_template, target_template):
+    source_values_by_key = build_document_values_by_key(source_document, source_template)
+
+    transferred_values = []
+    unmatched_old_fields = []
+    new_empty_fields = []
+
+    target_keys = set()
+
+    for section in target_template.sections:
+        for field in section.fields:
+            target_keys.add(field.key)
+
+            if field.key in source_values_by_key:
+                transferred_values.append({
+                    "template_field_id": field.id,
+                    "value_text": source_values_by_key[field.key],
+                    "field_key": field.key,
+                    "field_label": field.label,
+                    "is_transferred": True,
+                })
+            else:
+                transferred_values.append({
+                    "template_field_id": field.id,
+                    "value_text": field.default_value or "",
+                    "field_key": field.key,
+                    "field_label": field.label,
+                    "is_transferred": False,
+                })
+                new_empty_fields.append({
+                    "field_key": field.key,
+                    "field_label": field.label,
+                })
+
+    for old_key in source_values_by_key.keys():
+        if old_key not in target_keys:
+            unmatched_old_fields.append(old_key)
+
+    transferred_count = sum(1 for item in transferred_values if item["is_transferred"])
+
+    return {
+        "values": transferred_values,
+        "transferred_count": transferred_count,
+        "unmatched_old_fields": unmatched_old_fields,
+        "new_empty_fields": new_empty_fields,
+    }
+
+
+def replace_document_values(document_id, values):
+    ProjectDocumentValue.query.filter_by(document_id=document_id).delete()
+
+    for item in values:
+        template_field_id = item.get("template_field_id")
+        value_text = item.get("value_text", "")
+
+        field = DocumentTemplateField.query.get(template_field_id)
+        if not field:
+            continue
+
+        db.session.add(ProjectDocumentValue(
+            document_id=document_id,
+            template_field_id=template_field_id,
+            value_text=value_text,
+        ))
+
+
 @vision_scope_bp.route("/project/<int:project_id>/documents", methods=["GET"])
 @require_permission("vision_scope.view")
 def get_project_vision_scope_documents(project_id):
@@ -36,6 +134,77 @@ def get_project_vision_scope_documents(project_id):
     }), 200
 
 
+@vision_scope_bp.route("/project/<int:project_id>/documents/<int:document_id>", methods=["GET"])
+@require_permission("vision_scope.view")
+def get_project_vision_scope_document(project_id, document_id):
+    document = ProjectDocument.query.filter_by(
+        id=document_id,
+        project_id=project_id
+    ).first()
+
+    if not document:
+        return jsonify({"message": "Vision & Scope document not found"}), 404
+
+    document_template = DocumentTemplate.query.get(document.template_id)
+    latest_default_template = DocumentTemplate.query.filter_by(
+        module="vision_scope",
+        is_active=True,
+        is_default=True
+    ).first()
+
+    return jsonify({
+        "document": document.to_dict(include_values=True),
+        "template": document_template.to_dict(include_sections=True) if document_template else None,
+        "latest_default_template": (
+            latest_default_template.to_dict(include_sections=True)
+            if latest_default_template else None
+        ),
+        "has_template_update": bool(
+            latest_default_template and document_template
+            and latest_default_template.id != document_template.id
+        ),
+    }), 200
+
+
+@vision_scope_bp.route("/project/<int:project_id>/documents/<int:document_id>/template-switch-preview", methods=["GET"])
+@require_permission("vision_scope.view")
+def preview_template_switch(project_id, document_id):
+    target_template_id = request.args.get("target_template_id", type=int)
+
+    if not target_template_id:
+        return jsonify({"message": "target_template_id is required"}), 400
+
+    document = ProjectDocument.query.filter_by(
+        id=document_id,
+        project_id=project_id
+    ).first()
+
+    if not document:
+        return jsonify({"message": "Vision & Scope document not found"}), 404
+
+    source_template = DocumentTemplate.query.get(document.template_id)
+    target_template = DocumentTemplate.query.filter_by(
+        id=target_template_id,
+        module="vision_scope",
+        is_active=True
+    ).first()
+
+    if not source_template or not target_template:
+        return jsonify({"message": "Template not found"}), 404
+
+    preview = build_template_values_payload_from_document(
+        document,
+        source_template,
+        target_template
+    )
+
+    return jsonify({
+        "source_template": source_template.to_dict(include_sections=True),
+        "target_template": target_template.to_dict(include_sections=True),
+        "preview": preview,
+    }), 200
+
+
 @vision_scope_bp.route("/project/<int:project_id>/documents", methods=["POST"])
 @require_permission("vision_scope.create")
 def create_project_vision_scope_document(project_id):
@@ -47,16 +216,19 @@ def create_project_vision_scope_document(project_id):
     values = data.get("values", [])
 
     if not template_id:
-      return jsonify({"message": "Template is required"}), 400
+        return jsonify({"message": "Template is required"}), 400
 
-    template = DocumentTemplate.query.get(template_id)
+    template = DocumentTemplate.query.filter_by(
+        id=template_id,
+        module="vision_scope"
+    ).first()
+
     if not template:
         return jsonify({"message": "Template not found"}), 404
 
     if status == "Draft":
         existing_draft = ProjectDocument.query.filter_by(
             project_id=project_id,
-            template_id=template.id,
             status="Draft"
         ).first()
 
@@ -78,20 +250,7 @@ def create_project_vision_scope_document(project_id):
     db.session.add(document)
     db.session.flush()
 
-    for item in values:
-        template_field_id = item.get("template_field_id")
-        value_text = item.get("value_text", "")
-
-        field = DocumentTemplateField.query.get(template_field_id)
-        if not field:
-            continue
-
-        db.session.add(ProjectDocumentValue(
-            document_id=document.id,
-            template_field_id=template_field_id,
-            value_text=value_text,
-        ))
-
+    replace_document_values(document.id, values)
     db.session.commit()
 
     return jsonify({
@@ -105,6 +264,7 @@ def create_project_vision_scope_document(project_id):
 def update_project_vision_scope_document(project_id, document_id):
     data = request.get_json() or {}
 
+    template_id = data.get("template_id")
     version = (data.get("version") or "").strip()
     status = (data.get("status") or "").strip()
     values = data.get("values", [])
@@ -117,38 +277,25 @@ def update_project_vision_scope_document(project_id, document_id):
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
 
+    if template_id:
+        template = DocumentTemplate.query.filter_by(
+            id=template_id,
+            module="vision_scope"
+        ).first()
+
+        if not template:
+            return jsonify({"message": "Template not found"}), 404
+
+        document.template_id = template.id
+
     if version:
         document.version = version
 
     if status:
         document.status = status
 
-    existing_values = ProjectDocumentValue.query.filter_by(
-        document_id=document.id
-    ).all()
-
-    existing_value_map = {
-        value.template_field_id: value for value in existing_values
-    }
-
-    for item in values:
-        template_field_id = item.get("template_field_id")
-        value_text = item.get("value_text", "")
-
-        field = DocumentTemplateField.query.get(template_field_id)
-        if not field:
-            continue
-
-        existing_value = existing_value_map.get(template_field_id)
-
-        if existing_value:
-            existing_value.value_text = value_text
-        else:
-            db.session.add(ProjectDocumentValue(
-                document_id=document.id,
-                template_field_id=template_field_id,
-                value_text=value_text,
-            ))
+    if values is not None:
+        replace_document_values(document.id, values)
 
     db.session.commit()
 
