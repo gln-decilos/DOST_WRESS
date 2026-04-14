@@ -10,7 +10,7 @@ def seed_users_with_roles():
 
     # Must match EXACT names from your role seeder
     users_data = [
-        ("Admin", "User", "admin@wress.com", "Administrator"),
+        ("Admin", "User", "admin@wress.com", "System Admin"),
         ("Business", "Analyst", "ba@wress.com", "Business Analyst"),
         ("Product", "Owner", "po@wress.com", "Product Owner"),
         ("Project", "Manager", "pm@wress.com", "Project Manager"),

@@ -89,13 +89,4 @@ def create_app():
     app.register_blueprint(admin_template_section_bp)
     app.register_blueprint(admin_template_field_bp)
 
-    # DEBUG: PRINT REGISTERED ROUTES
-    print("\n=== REGISTERED ROUTES ===")
-    for rule in app.url_map.iter_rules():
-        methods = ",".join(
-            sorted(method for method in rule.methods if method not in {"HEAD", "OPTIONS"})
-        )
-        print(f"{rule.rule:50s} -> {rule.endpoint:35s} [{methods}]")
-    print("=== END ROUTES ===\n")
-
     return app
