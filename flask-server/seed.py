@@ -9,8 +9,6 @@ from app.seeder.users_seeder import seed_users_with_roles
 from app.seeder.role_permissions_seeder import seed_role_permissions
 
 
-
-
 def run_seeders():
     print("Seeding permissions...")
     seed_permissions()
