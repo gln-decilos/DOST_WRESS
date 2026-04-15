@@ -1,12 +1,45 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
 import { ChevronLeft, Save } from "lucide-react"
 import DynamicTemplateForm from "@/components/vision-scope/dynamic-form-template"
 import usePermissions from "@/features/access/use-permissions"
-import { getDefaultTemplate } from "@/features/templates/api"
-import type { DocumentTemplate } from "@/features/templates/types"
+
+type TemplateField = {
+  id: number
+  section_id: number
+  key: string
+  label: string
+  field_type: string
+  placeholder?: string | null
+  help_text?: string | null
+  default_value?: string | null
+  options_json?: string | null
+  is_required: boolean
+  sort_order: number
+}
+
+type TemplateSection = {
+  id: number
+  template_id: number
+  title: string
+  description?: string | null
+  sort_order: number
+  is_collapsible: boolean
+  fields: TemplateField[]
+}
+
+type DocumentTemplate = {
+  id: number
+  name: string
+  code: string
+  module: string
+  description?: string | null
+  is_active: boolean
+  is_default: boolean
+  organization_id?: number | null
+  sections: TemplateSection[]
+}
 
 type ProjectDocumentValue = {
   id: number
@@ -42,11 +75,26 @@ type RequirementResponse = {
     updated_at: string
   }
   document: RequirementDocument
+  template: DocumentTemplate | null
+  latest_default_template: DocumentTemplate | null
+  has_template_update: boolean
+  is_template_inactive?: boolean
 }
 
-type Props = {
-  projectId: number
-  documentId: number
+type TemplateSwitchPreview = {
+  values: Array<{
+    template_field_id: number
+    value_text: string
+    field_key: string
+    field_label: string
+    is_transferred: boolean
+  }>
+  transferred_count: number
+  unmatched_old_fields: string[]
+  new_empty_fields: Array<{
+    field_key: string
+    field_label: string
+  }>
 }
 
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
@@ -65,18 +113,88 @@ async function parseJsonSafely(res: Response) {
 export default function RequirementsEditPageView({
   projectId,
   documentId,
-}: Props) {
-  const router = useRouter()
+}: {
+  projectId: number
+  documentId: number
+}) {
   const { loading: permissionsLoading, hasPermission } = usePermissions()
 
   const canEditRequirements = hasPermission("requirements.edit")
 
   const [template, setTemplate] = useState<DocumentTemplate | null>(null)
+  const [documentState, setDocumentState] = useState<RequirementDocument | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
   const [templateLoading, setTemplateLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState("")
+
+  const [isTemplateSwitchModalOpen, setIsTemplateSwitchModalOpen] = useState(false)
+  const [templateSwitchSourceTemplate, setTemplateSwitchSourceTemplate] = useState<DocumentTemplate | null>(null)
+  const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] = useState<DocumentTemplate | null>(null)
+  const [templateSwitchPreview, setTemplateSwitchPreview] = useState<TemplateSwitchPreview | null>(null)
+
+  const navigateTo = (url: string) => {
+    window.location.href = url
+  }
+
+const goToRequirementsTable = () => {
+  navigateTo(`/project/${projectId}?tab=requirements`)
+}
+
+  const buildValuesFromDocument = (
+    sourceDocument: RequirementDocument,
+    sourceTemplate: DocumentTemplate
+  ) => {
+    const valuesByFieldId = new Map<number, string>()
+    sourceDocument.values?.forEach((item) => {
+      valuesByFieldId.set(item.template_field_id, item.value_text || "")
+    })
+
+    const mappedValues: Record<string, string> = {}
+    sourceTemplate.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        mappedValues[field.key] = valuesByFieldId.get(field.id) || field.default_value || ""
+      })
+    })
+
+    return mappedValues
+  }
+
+  const buildValuesFromSwitchPreview = (
+    targetTemplate: DocumentTemplate,
+    preview: TemplateSwitchPreview
+  ) => {
+    const previewByFieldId = new Map(
+      preview.values.map((item) => [item.template_field_id, item.value_text])
+    )
+
+    const mappedValues: Record<string, string> = {}
+    targetTemplate.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        mappedValues[field.key] = previewByFieldId.get(field.id) || field.default_value || ""
+      })
+    })
+
+    return mappedValues
+  }
+
+  const resetOpenSections = (selectedTemplate: DocumentTemplate) => {
+    const initialOpenSections: Record<number, boolean> = {}
+    selectedTemplate.sections.forEach((section) => {
+      initialOpenSections[section.id] = true
+    })
+    setOpenSections(initialOpenSections)
+  }
+
+  const openFormWithTemplate = (
+    selectedTemplate: DocumentTemplate,
+    selectedValues: Record<string, string>
+  ) => {
+    setTemplate(selectedTemplate)
+    setValues(selectedValues)
+    resetOpenSections(selectedTemplate)
+  }
 
   useEffect(() => {
     const fetchData = async () => {
@@ -84,43 +202,55 @@ export default function RequirementsEditPageView({
         setTemplateLoading(true)
         setMessage("")
 
-        const [fetchedTemplate, requirementRes] = await Promise.all([
-          getDefaultTemplate("requirements"),
-          fetch(`${API_BASE_URL}/project/${projectId}/requirements/${documentId}`, {
+        const requirementRes = await fetch(
+          `${API_BASE_URL}/project/${projectId}/requirements/${documentId}`,
+          {
             method: "GET",
             credentials: "include",
-          }),
-        ])
+          }
+        )
 
-        const requirementData = await parseJsonSafely(requirementRes)
+        const requirementData = (await parseJsonSafely(requirementRes)) as RequirementResponse
 
         if (!requirementRes.ok) {
-          setMessage(requirementData.message || "Failed to fetch requirement.")
+          setMessage((requirementData as any).message || "Failed to fetch requirement.")
           return
         }
 
-        const requirementPayload = requirementData as RequirementResponse
+        if (!requirementData.template) {
+          setMessage("Template not found for this requirement.")
+          return
+        }
 
-        setTemplate(fetchedTemplate)
+        setDocumentState(requirementData.document)
 
-        const initialValues: Record<string, string> = {}
-        const initialOpenSections: Record<number, boolean> = {}
+        if (
+          requirementData.has_template_update &&
+          requirementData.latest_default_template &&
+          requirementData.template.id !== requirementData.latest_default_template.id
+        ) {
+          const previewRes = await fetch(
+            `${API_BASE_URL}/project/${projectId}/requirements/${documentId}/template-switch-preview?target_template_id=${requirementData.latest_default_template.id}`,
+            {
+              method: "GET",
+              credentials: "include",
+            }
+          )
 
-        fetchedTemplate.sections.forEach((section) => {
-          initialOpenSections[section.id] = true
+          const previewData = await parseJsonSafely(previewRes)
 
-          section.fields.forEach((field) => {
-            const matchedValue =
-              requirementPayload.document.values?.find(
-                (item) => item.template_field_id === field.id
-              )?.value_text || ""
+          if (previewRes.ok) {
+            setTemplateSwitchSourceTemplate(requirementData.template)
+            setTemplateSwitchTargetTemplate(requirementData.latest_default_template)
+            setTemplateSwitchPreview(previewData.preview)
+            setIsTemplateSwitchModalOpen(true)
+          }
+        }
 
-            initialValues[field.key] = matchedValue || field.default_value || ""
-          })
-        })
-
-        setValues(initialValues)
-        setOpenSections(initialOpenSections)
+        openFormWithTemplate(
+          requirementData.template,
+          buildValuesFromDocument(requirementData.document, requirementData.template)
+        )
       } catch (error) {
         console.error("Failed to fetch requirement edit data:", error)
         setMessage(
@@ -154,12 +284,43 @@ export default function RequirementsEditPageView({
     }))
   }
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const handleKeepCurrentTemplate = () => {
+    if (!templateSwitchSourceTemplate || !documentState) return
+
+    openFormWithTemplate(
+      templateSwitchSourceTemplate,
+      buildValuesFromDocument(documentState, templateSwitchSourceTemplate)
+    )
+
+    setIsTemplateSwitchModalOpen(false)
+    setTemplateSwitchSourceTemplate(null)
+    setTemplateSwitchTargetTemplate(null)
+    setTemplateSwitchPreview(null)
+  }
+
+  const handleSwitchToLatestTemplate = () => {
+    if (!templateSwitchTargetTemplate || !templateSwitchPreview) return
+
+    openFormWithTemplate(
+      templateSwitchTargetTemplate,
+      buildValuesFromSwitchPreview(templateSwitchTargetTemplate, templateSwitchPreview)
+    )
+
+    setIsTemplateSwitchModalOpen(false)
+    setTemplateSwitchSourceTemplate(null)
+    setTemplateSwitchTargetTemplate(null)
+    setTemplateSwitchPreview(null)
+  }
+
+  const submitForm = async (targetStatus: "Draft" | "Published") => {
+    if (!template || !documentState) return
 
     try {
       setSubmitting(true)
       setMessage("")
+
+      const effectiveStatus =
+        documentState.status === "Draft" ? targetStatus : "Published"
 
       const res = await fetch(
         `${API_BASE_URL}/project/${projectId}/requirements/${documentId}`,
@@ -170,7 +331,8 @@ export default function RequirementsEditPageView({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            status: values.requirement_status || values.status || "Draft",
+            template_id: template.id,
+            status: effectiveStatus,
             values,
           }),
         }
@@ -179,11 +341,19 @@ export default function RequirementsEditPageView({
       const data = await parseJsonSafely(res)
 
       if (!res.ok) {
-        setMessage(data.message || "Failed to update requirement.")
+        setMessage(
+          data.message ||
+            `Failed to ${effectiveStatus === "Draft" ? "save draft" : "update requirement"}.`
+        )
         return
       }
 
-      router.push(`/project/${projectId}/requirements/${documentId}`)
+      if (effectiveStatus === "Draft") {
+        setMessage("Requirement draft updated successfully.")
+        return
+      }
+
+      goToRequirementsTable()
     } catch (error) {
       console.error("Failed to update requirement:", error)
       setMessage(
@@ -192,6 +362,11 @@ export default function RequirementsEditPageView({
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await submitForm("Published")
   }
 
   if (permissionsLoading || templateLoading) {
@@ -214,7 +389,7 @@ export default function RequirementsEditPageView({
     )
   }
 
-  if (!template) {
+  if (!template || !documentState) {
     return (
       <section className="rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
         <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
@@ -224,57 +399,168 @@ export default function RequirementsEditPageView({
     )
   }
 
+  const isEditingDraft = documentState.status === "Draft"
+
   return (
-    <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
-      <div className="mb-6">
-        <button
-          onClick={() => router.push(`/project/${projectId}/requirements/${documentId}`)}
-          className="mb-3 inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Back to Requirement
-        </button>
-
-        <h1 className="text-2xl font-semibold text-foreground">Edit Requirement</h1>
-        <p className="mt-2 text-muted-foreground">
-          Update the requirement details below.
-        </p>
-      </div>
-
-      {message && (
-        <div className="mb-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
-          {message}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <DynamicTemplateForm
-          template={template}
-          values={values}
-          openSections={openSections}
-          onToggleSection={toggleSection}
-          onChangeValue={handleChangeValue}
-        />
-
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Save className="h-4 w-4" />
-            {submitting ? "Saving..." : "Update Requirement"}
-          </button>
-
+    <>
+      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
+        <div className="mb-6">
           <button
             type="button"
-            onClick={() => router.push(`/project/${projectId}/requirements/${documentId}`)}
-            className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+            onClick={goToRequirementsTable}
+            className="mb-3 inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
           >
-            Cancel
+            <ChevronLeft className="h-4 w-4" />
+            Back to Requirements
           </button>
+
+          <h1 className="text-2xl font-semibold text-foreground">
+            {isEditingDraft ? "Edit Requirement Draft" : "Edit Requirement"}
+          </h1>
+          <p className="mt-2 text-muted-foreground">
+            Update the requirement details below.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Using template: <span className="font-medium text-foreground">{template.name}</span>
+          </p>
         </div>
-      </form>
-    </section>
+
+        {message && (
+          <div className="mb-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+            {message}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <DynamicTemplateForm
+            template={template}
+            values={values}
+            openSections={openSections}
+            onToggleSection={toggleSection}
+            onChangeValue={handleChangeValue}
+          />
+
+          <div className="flex items-center gap-3">
+            {isEditingDraft && (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => submitForm("Draft")}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Save className="h-4 w-4" />
+                {submitting ? "Saving..." : "Save as Draft"}
+              </button>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Save className="h-4 w-4" />
+              {submitting
+                ? "Saving..."
+                : isEditingDraft
+                  ? "Publish Requirement"
+                  : "Update Requirement"}
+            </button>
+
+            <button
+              type="button"
+              onClick={goToRequirementsTable}
+              className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {isTemplateSwitchModalOpen &&
+        templateSwitchSourceTemplate &&
+        templateSwitchTargetTemplate &&
+        templateSwitchPreview && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+              <h3 className="text-lg font-semibold text-foreground">
+                A newer template is available
+              </h3>
+
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                This requirement is currently using{" "}
+                <span className="font-medium text-foreground">
+                  {templateSwitchSourceTemplate.name}
+                </span>
+                . A newer template,{" "}
+                <span className="font-medium text-foreground">
+                  {templateSwitchTargetTemplate.name}
+                </span>
+                , is now available.
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                You can continue using your current template, or switch to the newer one.
+                If you switch, matching information will be carried over automatically.
+              </p>
+
+              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Information carried over
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">
+                    {templateSwitchPreview.transferred_count}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Information that won’t be included
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">
+                    {templateSwitchPreview.unmatched_old_fields.length}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    New information to fill in
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">
+                    {templateSwitchPreview.new_empty_fields.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsTemplateSwitchModalOpen(false)}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleKeepCurrentTemplate}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+                >
+                  Keep current template
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSwitchToLatestTemplate}
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+                >
+                  Use newer template
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+    </>
   )
 }
