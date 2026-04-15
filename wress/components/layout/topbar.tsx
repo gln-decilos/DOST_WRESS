@@ -1,7 +1,7 @@
 "use client"
 
 import { Bell, Search, Settings, User, Menu, LogOut } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import {
   DropdownMenu,
@@ -31,6 +31,7 @@ type AuthUser = {
   full_name: string
   email: string
   roles: UserRole[]
+  user_type?: string
 }
 
 const API_BASE_URL = "http://localhost:5000/api/auth"
@@ -39,26 +40,49 @@ export function Topbar({ onMenuClick }: TopbarProps) {
   const router = useRouter()
   const [q, setQ] = useState("")
   const [user, setUser] = useState<AuthUser | null>(null)
+  const hasFetched = useRef(false)
 
   useEffect(() => {
+    // Prevent multiple fetches
+    if (hasFetched.current) return
+    hasFetched.current = true
+
     const fetchCurrentUser = async () => {
       try {
+        const token = localStorage.getItem("token")
+
+        if (!token) {
+          return
+        }
+
         const response = await fetch(`${API_BASE_URL}/me`, {
           method: "GET",
-          credentials: "include",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
         })
 
-        if (!response.ok) return
+        if (!response.ok) {
+          if (response.status === 401) {
+            // Token expired or invalid
+            localStorage.removeItem("token")
+            localStorage.removeItem("user")
+            router.push("/signin")
+          }
+          return
+        }
 
         const data = await response.json()
-        setUser(data.user)
+        setUser(data)
       } catch (error) {
         console.error("Failed to load current user:", error)
       }
     }
 
     fetchCurrentUser()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty dependency array - only run once on mount
 
   const initials = useMemo(() => {
     if (!user) return "U"
@@ -71,34 +95,47 @@ export function Topbar({ onMenuClick }: TopbarProps) {
 
   const profileHref = useMemo(() => {
     const roleNames = user?.roles?.map((role) => role.name) || []
+    const userType = user?.user_type
 
-    if (roleNames.includes("Administrator")) return "/admin/profile"
-    if (roleNames.includes("Business Analyst")) return "/business-analyst/profile"
+    if (roleNames.includes("Administrator") || userType === "System Admin")
+      return "/admin/profile"
+    if (roleNames.includes("Business Analyst") || userType === "Organization Admin")
+      return "/business-analyst/profile"
 
     return "/profile"
   }, [user])
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/signout`, {
-        method: "POST",
-        credentials: "include",
-      })
+      const token = localStorage.getItem("token")
 
-      if (!response.ok) {
-        console.error("Failed to sign out:", response.status)
-        return
+      // Attempt to notify server about logout (don't wait for response)
+      if (token) {
+        fetch(`${API_BASE_URL}/signout`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }).catch(err => console.error("Logout notification error:", err))
       }
+    } catch (error) {
+      console.error("Logout error:", error)
+    } finally {
+      // Always clear local storage regardless of server response
+      localStorage.removeItem("token")
+      localStorage.removeItem("user")
+      sessionStorage.clear()
 
+      // Redirect to signin page
       router.push("/signin")
       router.refresh()
-    } catch (error) {
-      console.error("Failed to logout:", error)
     }
-  }
+  }, [router])
 
   return (
     <header className="sticky top-0 z-30 mb-6 rounded-xl border-b border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 lg:-mx-7 lg:rounded-none">
+      {/* Rest of your JSX remains the same */}
       <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-7">
         <button
           onClick={onMenuClick}
@@ -188,7 +225,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={handleLogout}
-                className="flex items-center gap-2 text-destructive"
+                className="flex items-center gap-2 text-destructive cursor-pointer"
               >
                 <LogOut className="size-4" />
                 Sign out

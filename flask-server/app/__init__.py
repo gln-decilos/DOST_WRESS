@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
-from app.extensions import db, migrate
+from app.extensions import db, migrate, mail
+from flask_jwt_extended import JWTManager
 
 
 def create_app():
@@ -16,7 +17,19 @@ def create_app():
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False
 
-    # CORS
+    app.config["MAIL_SERVER"] = "smtp.gmail.com"
+    app.config["MAIL_PORT"] = 587
+    app.config["MAIL_USE_TLS"] = True
+    app.config["MAIL_USERNAME"] = "libraryservices.nasugbu@gmail.com"
+    app.config["MAIL_PASSWORD"] = "knvyqygysjcueazz"
+    app.config["MAIL_DEFAULT_SENDER"] = app.config["MAIL_USERNAME"]
+
+    app.config["JWT_SECRET_KEY"] = "dev-jwt-secret-key"
+    app.config["JWT_TOKEN_LOCATION"] = ["headers"]
+    app.config["JWT_HEADER_NAME"] = "Authorization"
+    app.config["JWT_HEADER_TYPE"] = "Bearer"
+
+    # CORS - Updated to include all necessary routes
     CORS(
         app,
         supports_credentials=True,
@@ -25,9 +38,11 @@ def create_app():
                 "origins": [
                     "http://127.0.0.1:3000",
                     "http://localhost:3000",
+                    "http://localhost:3001",
                 ],
                 "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                 "allow_headers": ["Content-Type", "Authorization"],
+                "expose_headers": ["Content-Type", "Authorization"],
             }
         },
     )
@@ -35,7 +50,11 @@ def create_app():
     # EXTENSIONS
     db.init_app(app)
     migrate.init_app(app, db)
+    mail.init_app(app)
 
+    jwt = JWTManager()
+    jwt.init_app(app)
+    
     # MODELS
     from app.models.organization import Organization
     from app.models.organization_member import OrganizationMember
@@ -69,13 +88,12 @@ def create_app():
     from app.routes.admin_template_section_routes import admin_template_section_bp
     from app.routes.admin_template_field_routes import admin_template_field_bp
 
-    
-
     # BLUEPRINT REGISTRATION
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(organization_bp, url_prefix="/api/admin/organizations")
-    app.register_blueprint(user_bp, url_prefix="/api/admin/users")
+    # FIXED: Register user_bp with /api/users prefix (not /api/admin/users)
+    app.register_blueprint(user_bp, url_prefix="/api/users")
     app.register_blueprint(role_bp, url_prefix="/api/admin/roles")
     app.register_blueprint(permission_bp, url_prefix="/api/admin/permissions")
     app.register_blueprint(access_bp, url_prefix="/api/access")

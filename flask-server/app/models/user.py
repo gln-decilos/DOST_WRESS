@@ -5,6 +5,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 class User(db.Model):
     __tablename__ = "users"
 
+    USER_TYPES = ("System Admin", "Organization Admin", "Stakeholder")
+
     id = db.Column(db.Integer, primary_key=True)
 
     first_name = db.Column(db.String(100), nullable=False)
@@ -14,6 +16,8 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
 
     is_active = db.Column(db.Boolean, default=True)
+
+    user_type = db.Column(db.String(50), nullable=False, default="Stakeholder")
 
     created_at = db.Column(db.DateTime, server_default=db.func.now())
     updated_at = db.Column(
@@ -33,6 +37,12 @@ class User(db.Model):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+
+    # ✅ NEW: validate user_type
+    def set_user_type(self, user_type):
+        if user_type not in self.USER_TYPES:
+            raise ValueError(f"Invalid user_type: {user_type}")
+        self.user_type = user_type
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -73,6 +83,7 @@ class User(db.Model):
             "last_name": self.last_name,
             "full_name": f"{self.first_name} {self.last_name}",
             "email": self.email,
+            "user_type": self.user_type, 
             "organizations": [
                 {
                     "id": org.id,
