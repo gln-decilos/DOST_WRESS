@@ -67,6 +67,14 @@ type RequirementResponse = {
   document: RequirementDocument
 }
 
+type LinkOption = {
+  value: string
+  label: string
+  requirement_id: string
+  title: string
+  status: string
+}
+
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
@@ -79,6 +87,31 @@ async function parseJsonSafely(res: Response) {
   }
 
   return text ? JSON.parse(text) : {}
+}
+
+function injectLinkedRequirementOptions(
+  sourceTemplate: DocumentTemplate,
+  options: LinkOption[]
+): DocumentTemplate {
+  return {
+    ...sourceTemplate,
+    sections: sourceTemplate.sections.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) => {
+        if (field.key !== "linked_requirement") return field
+
+        return {
+          ...field,
+          options_json: JSON.stringify(
+            options.map((item) => ({
+              value: item.value,
+              label: item.label,
+            }))
+          ),
+        }
+      }),
+    })),
+  }
 }
 
 export default function RequirementsCreatePageView({
@@ -127,21 +160,37 @@ export default function RequirementsCreatePageView({
       setTemplateLoading(true)
       setMessage("")
 
-      const templateRes = await fetch(`${TEMPLATE_API_BASE_URL}/requirements/default`, {
-        method: "GET",
-        credentials: "include",
-      })
+      const [templateRes, linkOptionsRes] = await Promise.all([
+        fetch(`${TEMPLATE_API_BASE_URL}/requirements/default`, {
+          method: "GET",
+          credentials: "include",
+        }),
+        fetch(`${API_BASE_URL}/project/${projectId}/requirements/link-options`, {
+          method: "GET",
+          credentials: "include",
+        }),
+      ])
 
       const templateData = await parseJsonSafely(templateRes)
+      const linkOptionsData = await parseJsonSafely(linkOptionsRes)
 
       if (!templateRes.ok) {
         setMessage(templateData.message || "Failed to fetch requirements template.")
         return
       }
 
+      if (!linkOptionsRes.ok) {
+        setMessage(linkOptionsData.message || "Failed to fetch linked requirement options.")
+        return
+      }
+
       const fetchedTemplate = templateData.template as DocumentTemplate
-      setTemplate(fetchedTemplate)
-      initializeBlankValues(fetchedTemplate)
+      const linkOptions = (linkOptionsData.options || []) as LinkOption[]
+
+      const hydratedTemplate = injectLinkedRequirementOptions(fetchedTemplate, linkOptions)
+
+      setTemplate(hydratedTemplate)
+      initializeBlankValues(hydratedTemplate)
     } catch (error) {
       console.error("Failed to fetch requirements form data:", error)
       setMessage(
@@ -160,7 +209,7 @@ export default function RequirementsCreatePageView({
     } else if (!permissionsLoading && !canCreateRequirements && !canEditRequirements) {
       setTemplateLoading(false)
     }
-  }, [permissionsLoading, canCreateRequirements, canEditRequirements])
+  }, [permissionsLoading, canCreateRequirements, canEditRequirements, projectId])
 
   const handleChangeValue = (fieldKey: string, value: string) => {
     setValues((prev) => ({

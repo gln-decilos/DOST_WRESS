@@ -97,6 +97,14 @@ type TemplateSwitchPreview = {
   }>
 }
 
+type LinkOption = {
+  value: string
+  label: string
+  requirement_id: string
+  title: string
+  status: string
+}
+
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 
 async function parseJsonSafely(res: Response) {
@@ -108,6 +116,70 @@ async function parseJsonSafely(res: Response) {
   }
 
   return text ? JSON.parse(text) : {}
+}
+
+function injectLinkedRequirementOptions(
+  sourceTemplate: DocumentTemplate,
+  options: LinkOption[]
+): DocumentTemplate {
+  return {
+    ...sourceTemplate,
+    sections: sourceTemplate.sections.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) => {
+        if (field.key !== "linked_requirement") return field
+
+        return {
+          ...field,
+          options_json: JSON.stringify(
+            options.map((item) => ({
+              value: item.value,
+              label: item.label,
+            }))
+          ),
+        }
+      }),
+    })),
+  }
+}
+
+function normalizeLinkedRequirementValue(
+  mappedValues: Record<string, string>,
+  linkOptions: LinkOption[]
+): Record<string, string> {
+  const currentValue = String(mappedValues["linked_requirement"] || "").trim()
+
+  if (!currentValue) {
+    return mappedValues
+  }
+
+  const directMatch = linkOptions.find((item) => item.value === currentValue)
+  if (directMatch) {
+    return mappedValues
+  }
+
+  const requirementIdMatch = linkOptions.find(
+    (item) => item.requirement_id === currentValue
+  )
+  if (requirementIdMatch) {
+    return {
+      ...mappedValues,
+      linked_requirement: requirementIdMatch.value,
+    }
+  }
+
+  const labelMatch = linkOptions.find((item) => item.label === currentValue)
+  if (labelMatch) {
+    return {
+      ...mappedValues,
+      linked_requirement: labelMatch.value,
+    }
+  }
+
+  return {
+    ...mappedValues,
+    linked_requirement: "",
+  }
 }
 
 export default function RequirementsEditPageView({
@@ -130,17 +202,20 @@ export default function RequirementsEditPageView({
   const [message, setMessage] = useState("")
 
   const [isTemplateSwitchModalOpen, setIsTemplateSwitchModalOpen] = useState(false)
-  const [templateSwitchSourceTemplate, setTemplateSwitchSourceTemplate] = useState<DocumentTemplate | null>(null)
-  const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] = useState<DocumentTemplate | null>(null)
-  const [templateSwitchPreview, setTemplateSwitchPreview] = useState<TemplateSwitchPreview | null>(null)
+  const [templateSwitchSourceTemplate, setTemplateSwitchSourceTemplate] =
+    useState<DocumentTemplate | null>(null)
+  const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] =
+    useState<DocumentTemplate | null>(null)
+  const [templateSwitchPreview, setTemplateSwitchPreview] =
+    useState<TemplateSwitchPreview | null>(null)
 
   const navigateTo = (url: string) => {
     window.location.href = url
   }
 
-const goToRequirementsTable = () => {
-  navigateTo(`/project/${projectId}?tab=requirements`)
-}
+  const goToRequirementsTable = () => {
+    navigateTo(`/project/${projectId}?tab=requirements`)
+  }
 
   const buildValuesFromDocument = (
     sourceDocument: RequirementDocument,
@@ -154,7 +229,8 @@ const goToRequirementsTable = () => {
     const mappedValues: Record<string, string> = {}
     sourceTemplate.sections.forEach((section) => {
       section.fields.forEach((field) => {
-        mappedValues[field.key] = valuesByFieldId.get(field.id) || field.default_value || ""
+        mappedValues[field.key] =
+          valuesByFieldId.get(field.id) || field.default_value || ""
       })
     })
 
@@ -172,7 +248,8 @@ const goToRequirementsTable = () => {
     const mappedValues: Record<string, string> = {}
     targetTemplate.sections.forEach((section) => {
       section.fields.forEach((field) => {
-        mappedValues[field.key] = previewByFieldId.get(field.id) || field.default_value || ""
+        mappedValues[field.key] =
+          previewByFieldId.get(field.id) || field.default_value || ""
       })
     })
 
@@ -202,18 +279,35 @@ const goToRequirementsTable = () => {
         setTemplateLoading(true)
         setMessage("")
 
-        const requirementRes = await fetch(
-          `${API_BASE_URL}/project/${projectId}/requirements/${documentId}`,
-          {
+        const [requirementRes, linkOptionsRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/project/${projectId}/requirements/${documentId}`, {
             method: "GET",
             credentials: "include",
-          }
-        )
+          }),
+          fetch(
+            `${API_BASE_URL}/project/${projectId}/requirements/link-options?exclude_document_id=${documentId}`,
+            {
+              method: "GET",
+              credentials: "include",
+            }
+          ),
+        ])
 
-        const requirementData = (await parseJsonSafely(requirementRes)) as RequirementResponse
+        const requirementData =
+          (await parseJsonSafely(requirementRes)) as RequirementResponse
+        const linkOptionsData = await parseJsonSafely(linkOptionsRes)
 
         if (!requirementRes.ok) {
-          setMessage((requirementData as any).message || "Failed to fetch requirement.")
+          setMessage(
+            (requirementData as any).message || "Failed to fetch requirement."
+          )
+          return
+        }
+
+        if (!linkOptionsRes.ok) {
+          setMessage(
+            linkOptionsData.message || "Failed to fetch linked requirement options."
+          )
           return
         }
 
@@ -222,7 +316,18 @@ const goToRequirementsTable = () => {
           return
         }
 
+        const linkOptions = (linkOptionsData.options || []) as LinkOption[]
+        const hydratedSourceTemplate = injectLinkedRequirementOptions(
+          requirementData.template,
+          linkOptions
+        )
+
         setDocumentState(requirementData.document)
+
+        const normalizedSourceValues = normalizeLinkedRequirementValue(
+          buildValuesFromDocument(requirementData.document, hydratedSourceTemplate),
+          linkOptions
+        )
 
         if (
           requirementData.has_template_update &&
@@ -239,17 +344,38 @@ const goToRequirementsTable = () => {
 
           const previewData = await parseJsonSafely(previewRes)
 
-          if (previewRes.ok) {
-            setTemplateSwitchSourceTemplate(requirementData.template)
-            setTemplateSwitchTargetTemplate(requirementData.latest_default_template)
-            setTemplateSwitchPreview(previewData.preview)
-            setIsTemplateSwitchModalOpen(true)
+          if (!previewRes.ok) {
+            setMessage(
+              previewData.message || "Failed to load template switch preview."
+            )
+
+            openFormWithTemplate(
+              hydratedSourceTemplate,
+              normalizedSourceValues
+            )
+            return
           }
+
+          const hydratedTargetTemplate = injectLinkedRequirementOptions(
+            requirementData.latest_default_template,
+            linkOptions
+          )
+
+          setTemplateSwitchSourceTemplate(hydratedSourceTemplate)
+          setTemplateSwitchTargetTemplate(hydratedTargetTemplate)
+          setTemplateSwitchPreview(previewData.preview)
+          setIsTemplateSwitchModalOpen(true)
+
+          openFormWithTemplate(
+            hydratedSourceTemplate,
+            normalizedSourceValues
+          )
+          return
         }
 
         openFormWithTemplate(
-          requirementData.template,
-          buildValuesFromDocument(requirementData.document, requirementData.template)
+          hydratedSourceTemplate,
+          normalizedSourceValues
         )
       } catch (error) {
         console.error("Failed to fetch requirement edit data:", error)
@@ -287,9 +413,24 @@ const goToRequirementsTable = () => {
   const handleKeepCurrentTemplate = () => {
     if (!templateSwitchSourceTemplate || !documentState) return
 
+    const currentValues = normalizeLinkedRequirementValue(
+      buildValuesFromDocument(documentState, templateSwitchSourceTemplate),
+      JSON.parse(
+        templateSwitchSourceTemplate.sections
+          .flatMap((section) => section.fields)
+          .find((field) => field.key === "linked_requirement")?.options_json || "[]"
+      ).map((item: { value: string; label: string }) => ({
+        value: String(item.value),
+        label: String(item.label),
+        requirement_id: "",
+        title: "",
+        status: "",
+      }))
+    )
+
     openFormWithTemplate(
       templateSwitchSourceTemplate,
-      buildValuesFromDocument(documentState, templateSwitchSourceTemplate)
+      currentValues
     )
 
     setIsTemplateSwitchModalOpen(false)
@@ -303,7 +444,10 @@ const goToRequirementsTable = () => {
 
     openFormWithTemplate(
       templateSwitchTargetTemplate,
-      buildValuesFromSwitchPreview(templateSwitchTargetTemplate, templateSwitchPreview)
+      buildValuesFromSwitchPreview(
+        templateSwitchTargetTemplate,
+        templateSwitchPreview
+      )
     )
 
     setIsTemplateSwitchModalOpen(false)
@@ -343,13 +487,10 @@ const goToRequirementsTable = () => {
       if (!res.ok) {
         setMessage(
           data.message ||
-            `Failed to ${effectiveStatus === "Draft" ? "save draft" : "update requirement"}.`
+            `Failed to ${
+              effectiveStatus === "Draft" ? "save draft" : "update requirement"
+            }.`
         )
-        return
-      }
-
-      if (effectiveStatus === "Draft") {
-        setMessage("Requirement draft updated successfully.")
         return
       }
 
@@ -421,7 +562,8 @@ const goToRequirementsTable = () => {
             Update the requirement details below.
           </p>
           <p className="mt-2 text-xs text-muted-foreground">
-            Using template: <span className="font-medium text-foreground">{template.name}</span>
+            Using template:{" "}
+            <span className="font-medium text-foreground">{template.name}</span>
           </p>
         </div>
 
@@ -500,8 +642,9 @@ const goToRequirementsTable = () => {
               </p>
 
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                You can continue using your current template, or switch to the newer one.
-                If you switch, matching information will be carried over automatically.
+                You can continue using your current template, or switch to the newer
+                one. If you switch, matching information will be carried over
+                automatically.
               </p>
 
               <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -532,6 +675,51 @@ const goToRequirementsTable = () => {
                   </p>
                 </div>
               </div>
+
+              {templateSwitchPreview.unmatched_old_fields.length > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-medium text-amber-900">
+                    Some information from your current template is not part of the
+                    newer template
+                  </p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    This information will not be carried over if you switch.
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {templateSwitchPreview.unmatched_old_fields.map((fieldKey) => (
+                      <span
+                        key={fieldKey}
+                        className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
+                      >
+                        {fieldKey}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {templateSwitchPreview.new_empty_fields.length > 0 && (
+                <div className="mt-4 rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-foreground">
+                    New information you may need to complete
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    You can review and fill these in after switching templates.
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {templateSwitchPreview.new_empty_fields.map((field) => (
+                      <span
+                        key={field.field_key}
+                        className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground"
+                      >
+                        {field.field_label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="mt-6 flex flex-wrap justify-end gap-3">
                 <button

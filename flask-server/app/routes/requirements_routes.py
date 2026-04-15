@@ -219,9 +219,13 @@ def get_requirement_document(project_id: int, document_id: int):
     return document
 
 
-def generate_next_requirement_id(project_id: int):
+def get_requirement_template_ids():
     requirement_templates = DocumentTemplate.query.filter_by(module="requirements").all()
-    template_ids = [template.id for template in requirement_templates]
+    return [template.id for template in requirement_templates]
+
+
+def generate_next_requirement_id(project_id: int):
+    template_ids = get_requirement_template_ids()
 
     if not template_ids:
         return f"{VERSION_PREFIX}001"
@@ -254,8 +258,7 @@ def get_requirements(project_id):
     if not project:
         return jsonify({"message": "Project not found"}), 404
 
-    requirement_templates = DocumentTemplate.query.filter_by(module="requirements").all()
-    template_ids = [template.id for template in requirement_templates]
+    template_ids = get_requirement_template_ids()
 
     if not template_ids:
         return jsonify({"requirements": []}), 200
@@ -275,6 +278,53 @@ def get_requirements(project_id):
     return jsonify({
         "requirements": requirements
     }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirements/link-options", methods=["GET"])
+@require_permission("requirements.view")
+def get_requirement_link_options(project_id):
+    project = Project.query.get(project_id)
+    if not project:
+        return jsonify({"message": "Project not found"}), 404
+
+    exclude_document_id = request.args.get("exclude_document_id", type=int)
+    include_drafts = request.args.get("include_drafts", default="true").lower() == "true"
+
+    template_ids = get_requirement_template_ids()
+
+    if not template_ids:
+        return jsonify({"options": []}), 200
+
+    query = (
+        ProjectDocument.query
+        .filter(
+            ProjectDocument.project_id == project_id,
+            ProjectDocument.template_id.in_(template_ids)
+        )
+        .order_by(ProjectDocument.created_at.desc())
+    )
+
+    if exclude_document_id:
+        query = query.filter(ProjectDocument.id != exclude_document_id)
+
+    documents = query.all()
+
+    options = []
+    for document in documents:
+        summary = build_requirement_summary(document)
+
+        if not include_drafts and summary["status"] == "Draft":
+            continue
+
+        options.append({
+            "value": str(document.id),
+            "label": f'{summary["requirement_id"]} - {summary["title"]}',
+            "requirement_id": summary["requirement_id"],
+            "title": summary["title"],
+            "status": summary["status"],
+        })
+
+    return jsonify({"options": options}), 200
 
 
 @requirements_bp.route("/project/<int:project_id>/requirements/<int:document_id>", methods=["GET"])
@@ -415,8 +465,7 @@ def create_requirement(project_id):
         if status != "Draft" and not title:
             return jsonify({"message": "Title is required"}), 400
 
-        requirement_templates = DocumentTemplate.query.filter_by(module="requirements").all()
-        template_ids = [item.id for item in requirement_templates]
+        template_ids = get_requirement_template_ids()
 
         existing_document = (
             ProjectDocument.query
@@ -554,8 +603,7 @@ def update_requirement(project_id, document_id):
         if status != "Draft" and not title:
             return jsonify({"message": "Title is required"}), 400
 
-        requirement_templates = DocumentTemplate.query.filter_by(module="requirements").all()
-        template_ids = [item.id for item in requirement_templates]
+        template_ids = get_requirement_template_ids()
 
         existing_document = (
             ProjectDocument.query
