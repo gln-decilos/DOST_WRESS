@@ -8,9 +8,8 @@ class ProjectDocument(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
     template_id = db.Column(db.Integer, db.ForeignKey("document_templates.id"), nullable=False)
 
-    version = db.Column(db.String(50), nullable=False, default="v1.0")
+    version = db.Column(db.String(50), nullable=False, default="1.0")
     status = db.Column(db.String(50), nullable=False, default="Draft")
-
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
     created_at = db.Column(db.DateTime, server_default=db.func.now())
@@ -26,7 +25,14 @@ class ProjectDocument(db.Model):
         cascade="all, delete-orphan"
     )
 
-    def to_dict(self, include_values=False):
+    requirement_items = db.relationship(
+        "RequirementItem",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="RequirementItem.sort_order.asc()"
+    )
+
+    def to_dict(self, include_values=False, include_requirement_items=False):
         data = {
             "id": self.id,
             "project_id": self.project_id,
@@ -40,5 +46,10 @@ class ProjectDocument(db.Model):
 
         if include_values:
             data["values"] = [value.to_dict() for value in self.values]
+
+        if include_requirement_items:
+            data["requirement_items"] = [
+                item.to_dict(include_values=True) for item in self.requirement_items
+            ]
 
         return data

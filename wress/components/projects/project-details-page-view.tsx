@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
+import RequirementsTabContent from "@/components/projects/requirements-tab-content"
 import {
   ChevronDown,
   ChevronRight,
@@ -88,18 +89,6 @@ type ProjectDocument = {
   created_at: string
   updated_at: string
   values?: ProjectDocumentValue[]
-}
-
-type Requirement = {
-  id: number
-  requirement_id: string
-  title: string
-  priority: string
-  status: string
-  description?: string | null
-  rationale?: string | null
-  created_at: string
-  updated_at: string
 }
 
 type VersionIncrementType = "minor" | "major"
@@ -192,23 +181,6 @@ function parseOptions(optionsJson?: string | null): string[] {
   }
 }
 
-function formatDate(value: string) {
-  if (!value) return "-"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "-"
-  return date.toLocaleDateString()
-}
-
-function normalizeRequirementId(value: string, fallbackId: number) {
-  const trimmed = (value || "").trim()
-
-  if (trimmed && !/^v\d+(\.\d+)*$/i.test(trimmed)) {
-    return trimmed
-  }
-
-  return `REQ-SPEC-${fallbackId}`
-}
-
 export default function ProjectDetailsPageView() {
   const params = useParams()
   const router = useRouter()
@@ -227,9 +199,6 @@ export default function ProjectDetailsPageView() {
   const canDeleteVisionScope = hasPermission("vision_scope.delete")
 
   const canViewRequirements = hasPermission("requirements.view")
-  const canCreateRequirements = hasPermission("requirements.create")
-  const canEditRequirements = hasPermission("requirements.edit")
-  const canDeleteRequirements = hasPermission("requirements.delete")
 
   const [project, setProject] = useState<Project | null>(null)
   const [fetching, setFetching] = useState(true)
@@ -274,11 +243,6 @@ export default function ProjectDetailsPageView() {
   const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] = useState<DocumentTemplate | null>(null)
   const [templateSwitchPreview, setTemplateSwitchPreview] = useState<TemplateSwitchPreview | null>(null)
 
-  const [requirements, setRequirements] = useState<Requirement[]>([])
-  const [requirementsLoading, setRequirementsLoading] = useState(false)
-  const [requirementsSearch, setRequirementsSearch] = useState("")
-  const [requirementToDelete, setRequirementToDelete] = useState<Requirement | null>(null)
-
   const draftVisionScope = useMemo(
     () => visionScopeDocuments.find((doc) => doc.status === "Draft") || null,
     [visionScopeDocuments]
@@ -301,21 +265,6 @@ export default function ProjectDetailsPageView() {
     () => publishedVisionScopes.slice(1),
     [publishedVisionScopes]
   )
-
-  const filteredRequirements = useMemo(() => {
-    const keyword = requirementsSearch.trim().toLowerCase()
-
-    if (!keyword) return requirements
-
-    return requirements.filter((requirement) => {
-      return (
-        (requirement.requirement_id || "").toLowerCase().includes(keyword) ||
-        (requirement.title || "").toLowerCase().includes(keyword) ||
-        (requirement.priority || "").toLowerCase().includes(keyword) ||
-        (requirement.status || "").toLowerCase().includes(keyword)
-      )
-    })
-  }, [requirements, requirementsSearch])
 
   const getFieldValueFromDocument = (
     document: ProjectDocument,
@@ -453,7 +402,7 @@ export default function ProjectDetailsPageView() {
 
   const fetchVisionScopeDocuments = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+      const res = await fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
         method: "GET",
         credentials: "include",
       })
@@ -472,31 +421,6 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  const fetchRequirements = async () => {
-    try {
-      setRequirementsLoading(true)
-
-      const res = await fetch(`${API_BASE_URL}/project/${projectId}/requirements`, {
-        method: "GET",
-        credentials: "include",
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setMessage(data.message || "Failed to fetch requirements")
-        return
-      }
-
-      setRequirements(data.requirements || [])
-    } catch (error) {
-      console.error("Failed to fetch requirements:", error)
-      setMessage("Failed to fetch requirements")
-    } finally {
-      setRequirementsLoading(false)
-    }
-  }
-
   useEffect(() => {
     if (!permissionsLoading && canViewProject && projectId) {
       fetchProject()
@@ -511,12 +435,6 @@ export default function ProjectDetailsPageView() {
       fetchVisionScopeDocuments()
     }
   }, [permissionsLoading, canViewVisionScope, projectId])
-
-  useEffect(() => {
-    if (!permissionsLoading && canViewRequirements && projectId) {
-      fetchRequirements()
-    }
-  }, [permissionsLoading, canViewRequirements, projectId])
 
   const handleProjectChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -595,11 +513,10 @@ export default function ProjectDetailsPageView() {
 
     setMessage("")
 
-    // continue draft
     if (draftVisionScope) {
       try {
         const res = await fetch(
-          `${API_BASE_URL}/project/${projectId}/documents/${draftVisionScope.id}`,
+          `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${draftVisionScope.id}`,
           {
             method: "GET",
             credentials: "include",
@@ -626,7 +543,6 @@ export default function ProjectDetailsPageView() {
       return
     }
 
-    // create first document
     if (!latestVisionScope) {
       openFormWithTemplate(
         defaultVisionScopeTemplate,
@@ -637,10 +553,9 @@ export default function ProjectDetailsPageView() {
       return
     }
 
-    // create new draft from latest published
     try {
       const res = await fetch(
-        `${API_BASE_URL}/project/${projectId}/documents/${latestVisionScope.id}`,
+        `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${latestVisionScope.id}`,
         {
           method: "GET",
           credentials: "include",
@@ -660,7 +575,7 @@ export default function ProjectDetailsPageView() {
         data.template.id !== data.latest_default_template.id
       ) {
         const previewRes = await fetch(
-          `${API_BASE_URL}/project/${projectId}/documents/${latestVisionScope.id}/template-switch-preview?target_template_id=${data.latest_default_template.id}`,
+          `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${latestVisionScope.id}/template-switch-preview?target_template_id=${data.latest_default_template.id}`,
           {
             method: "GET",
             credentials: "include",
@@ -701,7 +616,7 @@ export default function ProjectDetailsPageView() {
       setMessage("")
 
       const res = await fetch(
-        `${API_BASE_URL}/project/${projectId}/documents/${document.id}`,
+        `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${document.id}`,
         {
           method: "GET",
           credentials: "include",
@@ -797,7 +712,7 @@ export default function ProjectDetailsPageView() {
 
       if (editingVisionScope?.status === "Draft") {
         const res = await fetch(
-          `${API_BASE_URL}/project/${projectId}/documents/${editingVisionScope.id}`,
+          `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${editingVisionScope.id}`,
           {
             method: "PUT",
             headers: {
@@ -821,7 +736,7 @@ export default function ProjectDetailsPageView() {
 
         setMessage(data.message || "Draft updated successfully")
       } else {
-        const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+        const res = await fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -888,7 +803,7 @@ export default function ProjectDetailsPageView() {
 
       if (editingVisionScope?.status === "Draft") {
         const res = await fetch(
-          `${API_BASE_URL}/project/${projectId}/documents/${editingVisionScope.id}`,
+          `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${editingVisionScope.id}`,
           {
             method: "PUT",
             headers: {
@@ -913,7 +828,7 @@ export default function ProjectDetailsPageView() {
 
         setMessage(data.message || `Vision & Scope published as version ${computedVersion}`)
       } else {
-        const res = await fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+        const res = await fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -996,7 +911,7 @@ export default function ProjectDetailsPageView() {
       setMessage("")
 
       const res = await fetch(
-        `${API_BASE_URL}/project/${projectId}/documents/${visionScopeToDelete.id}`,
+        `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${visionScopeToDelete.id}`,
         {
           method: "DELETE",
           credentials: "include",
@@ -1019,39 +934,6 @@ export default function ProjectDetailsPageView() {
     } catch (error) {
       console.error("Failed to delete vision & scope:", error)
       setMessage("Failed to delete vision & scope")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const confirmDeleteRequirement = async () => {
-    if (!requirementToDelete) return
-
-    try {
-      setLoading(true)
-      setMessage("")
-
-      const res = await fetch(
-        `${API_BASE_URL}/project/${projectId}/requirements/${requirementToDelete.id}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-        }
-      )
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setMessage(data.message || "Failed to delete requirement")
-        return
-      }
-
-      setRequirementToDelete(null)
-      setMessage(data.message || "Requirement deleted successfully")
-      await fetchRequirements()
-    } catch (error) {
-      console.error("Failed to delete requirement:", error)
-      setMessage("Failed to delete requirement")
     } finally {
       setLoading(false)
     }
@@ -1828,289 +1710,139 @@ export default function ProjectDetailsPageView() {
           </p>
         </div>
       ) : (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Requirements</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Track and maintain project requirements.
-              </p>
-            </div>
-
-            {canCreateRequirements && (
-              <button
-                type="button"
-                onClick={() => router.push(`/project/${projectId}/requirements/create`)}
-                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-              >
-                Add Requirement
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="rounded-xl border border-border bg-background p-4">
-              <p className="text-sm font-medium text-muted-foreground">Total Requirements</p>
-              <p className="mt-1 text-lg font-semibold text-foreground">{requirements.length}</p>
-            </div>
-
-            <div className="w-full md:max-w-sm">
-              <input
-                type="text"
-                value={requirementsSearch}
-                onChange={(e) => setRequirementsSearch(e.target.value)}
-                placeholder="Search requirement ID, title, priority, or status..."
-                className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-          </div>
-
-          {requirementsLoading ? (
-            <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
-              Loading requirements...
-            </div>
-          ) : filteredRequirements.length === 0 ? (
-            <div className="rounded-2xl bg-background p-10 text-center ring-1 ring-border">
-              <div className="mb-4 flex justify-center">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                  <ClipboardList className="h-7 w-7 text-muted-foreground" />
-                </div>
-              </div>
-
-              <h3 className="text-base font-semibold text-foreground">No Requirements yet</h3>
-
-              <p className="mt-2 text-sm text-muted-foreground">
-                Start adding requirements one by one.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
-              <div className="border-b border-border px-6 py-4">
-                <h3 className="text-lg font-semibold text-foreground">Requirements Table</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Each row is one requirement record.
-                </p>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-muted/40 text-left text-foreground">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Requirement ID</th>
-                      <th className="px-4 py-3 font-medium">Title</th>
-                      <th className="px-4 py-3 font-medium">Priority</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium">Date Created</th>
-                      <th className="px-4 py-3 font-medium">Date Modified</th>
-                      <th className="w-40 px-4 py-3 font-medium">Actions</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filteredRequirements.map((requirement) => (
-                      <tr key={requirement.id} className="border-t border-border hover:bg-muted/30">
-                        <td className="px-4 py-3 font-medium text-foreground">
-                          {normalizeRequirementId(requirement.requirement_id, requirement.id)}
-                        </td>
-
-                        <td className="px-4 py-3 text-foreground">{requirement.title || "-"}</td>
-
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {requirement.priority || "-"}
-                        </td>
-
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {requirement.status || "-"}
-                        </td>
-
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {formatDate(requirement.created_at)}
-                        </td>
-
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {formatDate(requirement.updated_at)}
-                        </td>
-
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                router.push(`/project/${projectId}/requirements/${requirement.id}`)
-                              }
-                              className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                              title="View Requirement"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-
-                            {canEditRequirements && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  router.push(
-                                    `/project/${projectId}/requirements/${requirement.id}/edit`
-                                  )
-                                }
-                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                title="Edit Requirement"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                            )}
-
-                            {canDeleteRequirements && (
-                              <button
-                                type="button"
-                                onClick={() => setRequirementToDelete(requirement)}
-                                className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                                title="Delete Requirement"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
+        <RequirementsTabContent projectId={projectId} />
       )}
 
       {isTemplateSwitchModalOpen && templateSwitchSourceTemplate && templateSwitchTargetTemplate && templateSwitchPreview && (
-  <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
-    <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-      <h3 className="text-lg font-semibold text-foreground">
-        A newer template is available
-      </h3>
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              A newer template is available
+            </h3>
 
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        This document is currently using{" "}
-        <span className="font-medium text-foreground">
-          {templateSwitchSourceTemplate.name}
-        </span>
-        . A newer template,{" "}
-        <span className="font-medium text-foreground">
-          {templateSwitchTargetTemplate.name}
-        </span>
-        , is now available.
-      </p>
-
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        You can continue using your current template, or switch to the newer one.
-        If you switch, matching information will be carried over automatically.
-      </p>
-
-      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="rounded-xl border border-border bg-background p-4">
-          <p className="text-sm font-medium text-muted-foreground">
-            Information carried over
-          </p>
-          <p className="mt-1 text-lg font-semibold text-foreground">
-            {templateSwitchPreview.transferred_count}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-border bg-background p-4">
-          <p className="text-sm font-medium text-muted-foreground">
-            Information that won’t be included
-          </p>
-          <p className="mt-1 text-lg font-semibold text-foreground">
-            {templateSwitchPreview.unmatched_old_fields.length}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-border bg-background p-4">
-          <p className="text-sm font-medium text-muted-foreground">
-            New information to fill in
-          </p>
-          <p className="mt-1 text-lg font-semibold text-foreground">
-            {templateSwitchPreview.new_empty_fields.length}
-          </p>
-        </div>
-      </div>
-
-      {templateSwitchPreview.unmatched_old_fields.length > 0 && (
-        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-medium text-amber-900">
-            Some information from your current template is not part of the newer template
-          </p>
-          <p className="mt-1 text-xs text-amber-800">
-            This information will not be carried over if you switch.
-          </p>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {templateSwitchPreview.unmatched_old_fields.map((fieldKey) => (
-              <span
-                key={fieldKey}
-                className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
-              >
-                {fieldKey}
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              This document is currently using{" "}
+              <span className="font-medium text-foreground">
+                {templateSwitchSourceTemplate.name}
               </span>
-            ))}
+              . A newer template,{" "}
+              <span className="font-medium text-foreground">
+                {templateSwitchTargetTemplate.name}
+              </span>
+              , is now available.
+            </p>
+
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              You can continue using your current template, or switch to the newer one.
+              If you switch, matching information will be carried over automatically.
+            </p>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Information carried over
+                </p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {templateSwitchPreview.transferred_count}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Information that won’t be included
+                </p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {templateSwitchPreview.unmatched_old_fields.length}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-sm font-medium text-muted-foreground">
+                  New information to fill in
+                </p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {templateSwitchPreview.new_empty_fields.length}
+                </p>
+              </div>
+            </div>
+
+            {templateSwitchPreview.unmatched_old_fields.length > 0 && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-medium text-amber-900">
+                  Some information from your current template is not part of the newer template
+                </p>
+                <p className="mt-1 text-xs text-amber-800">
+                  This information will not be carried over if you switch.
+                </p>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {templateSwitchPreview.unmatched_old_fields.map((fieldKey) => (
+                    <span
+                      key={fieldKey}
+                      className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
+                    >
+                      {fieldKey}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {templateSwitchPreview.new_empty_fields.length > 0 && (
+              <div className="mt-4 rounded-xl border border-border bg-background p-4">
+                <p className="text-sm font-medium text-foreground">
+                  New information you may need to complete
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  You can review and fill these in after switching templates.
+                </p>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {templateSwitchPreview.new_empty_fields.map((field) => (
+                    <span
+                      key={field.field_key}
+                      className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground"
+                    >
+                      {field.field_label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTemplateSwitchModalOpen(false)
+                  setTemplateSwitchSourceTemplate(null)
+                  setTemplateSwitchTargetTemplate(null)
+                  setTemplateSwitchPreview(null)
+                }}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleKeepCurrentTemplate}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Keep current template
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSwitchToLatestTemplate}
+                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+              >
+                Use newer template
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      {templateSwitchPreview.new_empty_fields.length > 0 && (
-        <div className="mt-4 rounded-xl border border-border bg-background p-4">
-          <p className="text-sm font-medium text-foreground">
-            New information you may need to complete
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            You can review and fill these in after switching templates.
-          </p>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {templateSwitchPreview.new_empty_fields.map((field) => (
-              <span
-                key={field.field_key}
-                className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground"
-              >
-                {field.field_label}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="mt-6 flex flex-wrap justify-end gap-3">
-        <button
-          type="button"
-          onClick={() => {
-            setIsTemplateSwitchModalOpen(false)
-            setTemplateSwitchSourceTemplate(null)
-            setTemplateSwitchTargetTemplate(null)
-            setTemplateSwitchPreview(null)
-          }}
-          className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
-        >
-          Cancel
-        </button>
-
-        <button
-          type="button"
-          onClick={handleKeepCurrentTemplate}
-          className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
-        >
-          Keep current template
-        </button>
-
-        <button
-          type="button"
-          onClick={handleSwitchToLatestTemplate}
-          className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-        >
-          Use newer template
-        </button>
-      </div>
-    </div>
-  </div>
-)}
 
       {isSaveVisionScopeVersionModalOpen && (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40 p-4">
@@ -2187,41 +1919,6 @@ export default function ProjectDetailsPageView() {
               <button
                 type="button"
                 onClick={confirmDeleteVisionScope}
-                disabled={loading}
-                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
-              >
-                {loading ? "Deleting..." : "Confirm Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {requirementToDelete && canDeleteRequirements && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">Delete Requirement</h3>
-
-            <p className="mt-3 text-sm text-muted-foreground">
-              Are you sure you want to delete{" "}
-              <span className="font-semibold text-foreground">
-                {normalizeRequirementId(requirementToDelete.requirement_id, requirementToDelete.id)}
-              </span>
-              ? This action cannot be undone.
-            </p>
-
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setRequirementToDelete(null)}
-                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={confirmDeleteRequirement}
                 disabled={loading}
                 className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
               >

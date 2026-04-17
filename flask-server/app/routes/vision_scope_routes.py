@@ -1,4 +1,6 @@
 from flask import Blueprint, jsonify, request, session
+from sqlalchemy.orm import joinedload
+
 from app.extensions import db
 from app.models.project_document import ProjectDocument
 from app.models.project_document_value import ProjectDocumentValue
@@ -22,6 +24,11 @@ def get_template_field_maps(template):
             field_by_key[field.key] = field
 
     return field_by_id, field_by_key
+
+
+def get_vision_scope_template_ids():
+    templates = DocumentTemplate.query.filter_by(module="vision_scope").all()
+    return [template.id for template in templates]
 
 
 def build_document_values_by_key(document, template):
@@ -90,11 +97,14 @@ def build_template_values_payload_from_document(source_document, source_template
 
 
 def replace_document_values(document_id, values):
-    ProjectDocumentValue.query.filter_by(document_id=document_id).delete()
+    ProjectDocumentValue.query.filter_by(document_id=document_id).delete(synchronize_session=False)
 
     for item in values:
         template_field_id = item.get("template_field_id")
         value_text = item.get("value_text", "")
+
+        if not template_field_id:
+            continue
 
         field = DocumentTemplateField.query.get(template_field_id)
         if not field:
@@ -107,14 +117,28 @@ def replace_document_values(document_id, values):
         ))
 
 
-@vision_scope_bp.route("/project/<int:project_id>/documents", methods=["GET"])
+def get_vision_scope_document(project_id, document_id):
+    template_ids = get_vision_scope_template_ids()
+
+    if not template_ids:
+        return None
+
+    return (
+        ProjectDocument.query
+        .options(joinedload(ProjectDocument.values))
+        .filter(
+            ProjectDocument.id == document_id,
+            ProjectDocument.project_id == project_id,
+            ProjectDocument.template_id.in_(template_ids)
+        )
+        .first()
+    )
+
+
+@vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents", methods=["GET"])
 @require_permission("vision_scope.view")
 def get_project_vision_scope_documents(project_id):
-    vision_scope_templates = DocumentTemplate.query.filter_by(
-        module="vision_scope"
-    ).all()
-
-    template_ids = [template.id for template in vision_scope_templates]
+    template_ids = get_vision_scope_template_ids()
 
     if not template_ids:
         return jsonify({"documents": []}), 200
@@ -125,7 +149,7 @@ def get_project_vision_scope_documents(project_id):
             ProjectDocument.project_id == project_id,
             ProjectDocument.template_id.in_(template_ids)
         )
-        .order_by(ProjectDocument.updated_at.desc())
+        .order_by(ProjectDocument.updated_at.desc(), ProjectDocument.id.desc())
         .all()
     )
 
@@ -134,13 +158,10 @@ def get_project_vision_scope_documents(project_id):
     }), 200
 
 
-@vision_scope_bp.route("/project/<int:project_id>/documents/<int:document_id>", methods=["GET"])
+@vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["GET"])
 @require_permission("vision_scope.view")
 def get_project_vision_scope_document(project_id, document_id):
-    document = ProjectDocument.query.filter_by(
-        id=document_id,
-        project_id=project_id
-    ).first()
+    document = get_vision_scope_document(project_id, document_id)
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
@@ -166,7 +187,7 @@ def get_project_vision_scope_document(project_id, document_id):
     }), 200
 
 
-@vision_scope_bp.route("/project/<int:project_id>/documents/<int:document_id>/template-switch-preview", methods=["GET"])
+@vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>/template-switch-preview", methods=["GET"])
 @require_permission("vision_scope.view")
 def preview_template_switch(project_id, document_id):
     target_template_id = request.args.get("target_template_id", type=int)
@@ -174,15 +195,16 @@ def preview_template_switch(project_id, document_id):
     if not target_template_id:
         return jsonify({"message": "target_template_id is required"}), 400
 
-    document = ProjectDocument.query.filter_by(
-        id=document_id,
-        project_id=project_id
-    ).first()
+    document = get_vision_scope_document(project_id, document_id)
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
 
-    source_template = DocumentTemplate.query.get(document.template_id)
+    source_template = DocumentTemplate.query.filter_by(
+        id=document.template_id,
+        module="vision_scope"
+    ).first()
+
     target_template = DocumentTemplate.query.filter_by(
         id=target_template_id,
         module="vision_scope",
@@ -205,7 +227,7 @@ def preview_template_switch(project_id, document_id):
     }), 200
 
 
-@vision_scope_bp.route("/project/<int:project_id>/documents", methods=["POST"])
+@vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents", methods=["POST"])
 @require_permission("vision_scope.create")
 def create_project_vision_scope_document(project_id):
     data = request.get_json() or {}
@@ -213,7 +235,7 @@ def create_project_vision_scope_document(project_id):
     template_id = data.get("template_id")
     version = (data.get("version") or "").strip()
     status = (data.get("status") or "Draft").strip()
-    values = data.get("values", [])
+    values = data.get("values") or []
 
     if not template_id:
         return jsonify({"message": "Template is required"}), 400
@@ -227,13 +249,19 @@ def create_project_vision_scope_document(project_id):
         return jsonify({"message": "Template not found"}), 404
 
     if status == "Draft":
-        existing_draft = ProjectDocument.query.filter_by(
-            project_id=project_id,
-            status="Draft"
-        ).first()
+        existing_draft = (
+            ProjectDocument.query
+            .join(DocumentTemplate, ProjectDocument.template_id == DocumentTemplate.id)
+            .filter(
+                ProjectDocument.project_id == project_id,
+                ProjectDocument.status == "Draft",
+                DocumentTemplate.module == "vision_scope"
+            )
+            .first()
+        )
 
         if existing_draft:
-            return jsonify({"message": "A draft already exists for this project"}), 400
+            return jsonify({"message": "A Vision & Scope draft already exists for this project"}), 400
 
         version = "Draft"
     else:
@@ -259,7 +287,7 @@ def create_project_vision_scope_document(project_id):
     }), 201
 
 
-@vision_scope_bp.route("/project/<int:project_id>/documents/<int:document_id>", methods=["PUT"])
+@vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["PUT"])
 @require_permission("vision_scope.edit")
 def update_project_vision_scope_document(project_id, document_id):
     data = request.get_json() or {}
@@ -267,12 +295,9 @@ def update_project_vision_scope_document(project_id, document_id):
     template_id = data.get("template_id")
     version = (data.get("version") or "").strip()
     status = (data.get("status") or "").strip()
-    values = data.get("values", [])
+    values = data.get("values", None)
 
-    document = ProjectDocument.query.filter_by(
-        id=document_id,
-        project_id=project_id
-    ).first()
+    document = get_vision_scope_document(project_id, document_id)
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
@@ -288,11 +313,31 @@ def update_project_vision_scope_document(project_id, document_id):
 
         document.template_id = template.id
 
-    if version:
-        document.version = version
-
     if status:
-        document.status = status
+        if status == "Draft":
+            existing_other_draft = (
+                ProjectDocument.query
+                .join(DocumentTemplate, ProjectDocument.template_id == DocumentTemplate.id)
+                .filter(
+                    ProjectDocument.project_id == project_id,
+                    ProjectDocument.status == "Draft",
+                    DocumentTemplate.module == "vision_scope",
+                    ProjectDocument.id != document.id
+                )
+                .first()
+            )
+
+            if existing_other_draft:
+                return jsonify({"message": "Another Vision & Scope draft already exists for this project"}), 400
+
+            document.status = "Draft"
+            document.version = "Draft"
+        else:
+            document.status = status
+            if version:
+                document.version = version
+    elif version:
+        document.version = version
 
     if values is not None:
         replace_document_values(document.id, values)
@@ -305,18 +350,15 @@ def update_project_vision_scope_document(project_id, document_id):
     }), 200
 
 
-@vision_scope_bp.route("/project/<int:project_id>/documents/<int:document_id>", methods=["DELETE"])
+@vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["DELETE"])
 @require_permission("vision_scope.delete")
 def delete_project_vision_scope_document(project_id, document_id):
-    document = ProjectDocument.query.filter_by(
-        id=document_id,
-        project_id=project_id
-    ).first()
+    document = get_vision_scope_document(project_id, document_id)
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
 
-    ProjectDocumentValue.query.filter_by(document_id=document.id).delete()
+    ProjectDocumentValue.query.filter_by(document_id=document.id).delete(synchronize_session=False)
     db.session.delete(document)
     db.session.commit()
 
