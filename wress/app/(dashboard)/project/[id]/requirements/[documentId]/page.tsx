@@ -1,4 +1,4 @@
-import RequirementDetailsPageView from "@/components/projects/requirements-details-page-view"
+import RequirementsDocumentPageView from "@/components/projects/requirements-document-page-view"
 
 type PageProps = {
   params: Promise<{
@@ -11,7 +11,7 @@ export default async function Page({ params }: PageProps) {
   const { id, documentId } = await params
 
   return (
-    <RequirementDetailsPageView
+    <RequirementsDocumentPageView
       projectId={Number(id)}
       documentId={Number(documentId)}
     />
