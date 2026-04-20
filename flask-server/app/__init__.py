@@ -88,6 +88,7 @@ def create_app():
     from app.routes.template_routes import template_bp
     from app.routes.vision_scope_routes import vision_scope_bp
     from app.routes.requirements_routes import requirements_bp
+    from app.routes.orgadmin_project_routes import orgadmin_project_bp 
 
     from app.routes.admin_template_routes import admin_template_bp
     from app.routes.admin_template_section_routes import admin_template_section_bp
@@ -107,6 +108,7 @@ def create_app():
     app.register_blueprint(template_bp, url_prefix="/api/templates")
     app.register_blueprint(vision_scope_bp, url_prefix="/api/business-analyst")
     app.register_blueprint(requirements_bp, url_prefix="/api/business-analyst")
+    app.register_blueprint(orgadmin_project_bp, url_prefix="/api/orgadmin/projects") 
 
     app.register_blueprint(admin_template_bp)
     app.register_blueprint(admin_template_section_bp)

@@ -13,7 +13,25 @@ import os
 user_bp = Blueprint("users", __name__, url_prefix="/api/users")
 
 # Use consistent JWT secret key
-JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-this-in-production-make-it-at-least-32-characters-long')
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z')
+
+# ============ CORS OPTIONS HANDLER ============
+@user_bp.route('', methods=['OPTIONS'])
+@user_bp.route('/<int:user_id>', methods=['OPTIONS'])
+@user_bp.route('/me', methods=['OPTIONS'])
+@user_bp.route('/organizations', methods=['OPTIONS'])
+@user_bp.route('/organization/users', methods=['OPTIONS'])
+@user_bp.route('/organization/users/<int:user_id>', methods=['OPTIONS'])
+@user_bp.route('/organization/organizations', methods=['OPTIONS'])
+@user_bp.route('/check-organization-admin', methods=['OPTIONS'])
+def handle_options(user_id=None):
+    """Handle CORS preflight requests"""
+    response = jsonify({})
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response, 200
 
 # ============ AUTHENTICATION DECORATORS ============
 def login_required(f):
@@ -139,17 +157,17 @@ def create_user():
     if user_type not in valid_user_types:
         return jsonify({"error": f"Invalid user_type. Must be one of: {', '.join(valid_user_types)}"}), 400
 
-    # Check organization admin limit
-    if user_type == "Organization Admin" and organization_ids:
-        organization = Organization.query.get(organization_ids[0])
-        if organization:
-            existing_admin = User.query.filter(
-                User.user_type == "Organization Admin",
-                User.organizations.any(Organization.id == organization.id),
-                User.is_active == True
-            ).first()
-            if existing_admin:
-                return jsonify({"error": f"Organization already has an admin: {existing_admin.first_name} {existing_admin.last_name}"}), 400
+    # REMOVED: Organization admin limit check - now allowing multiple Organization Admins
+    # if user_type == "Organization Admin" and organization_ids:
+    #     organization = Organization.query.get(organization_ids[0])
+    #     if organization:
+    #         existing_admin = User.query.filter(
+    #             User.user_type == "Organization Admin",
+    #             User.organizations.any(Organization.id == organization.id),
+    #             User.is_active == True
+    #         ).first()
+    #         if existing_admin:
+    #             return jsonify({"error": f"Organization already has an admin: {existing_admin.first_name} {existing_admin.last_name}"}), 400
 
     if len(organization_ids) > 1:
         return jsonify({"error": "User can only belong to one organization"}), 400
@@ -220,23 +238,23 @@ def update_user(user_id):
     if user_type not in valid_user_types:
         return jsonify({"error": f"Invalid user_type. Must be one of: {', '.join(valid_user_types)}"}), 400
     
-    # Check organization admin limit when changing to Organization Admin
-    if user_type == "Organization Admin" and user.user_type != "Organization Admin":
-        organization_ids = data.get("organization_ids", None)
-        if organization_ids is None and user.organizations:
-            organization_ids = [user.organizations[0].id]
-        
-        if organization_ids:
-            organization = Organization.query.get(organization_ids[0])
-            if organization:
-                existing_admin = User.query.filter(
-                    User.user_type == "Organization Admin",
-                    User.organizations.any(Organization.id == organization.id),
-                    User.id != user_id,
-                    User.is_active == True
-                ).first()
-                if existing_admin:
-                    return jsonify({"error": f"Organization already has an admin: {existing_admin.first_name} {existing_admin.last_name}"}), 400
+    # REMOVED: Organization admin limit check when changing to Organization Admin
+    # if user_type == "Organization Admin" and user.user_type != "Organization Admin":
+    #     organization_ids = data.get("organization_ids", None)
+    #     if organization_ids is None and user.organizations:
+    #         organization_ids = [user.organizations[0].id]
+    #     
+    #     if organization_ids:
+    #         organization = Organization.query.get(organization_ids[0])
+    #         if organization:
+    #             existing_admin = User.query.filter(
+    #                 User.user_type == "Organization Admin",
+    #                 User.organizations.any(Organization.id == organization.id),
+    #                 User.id != user_id,
+    #                 User.is_active == True
+    #             ).first()
+    #             if existing_admin:
+    #                 return jsonify({"error": f"Organization already has an admin: {existing_admin.first_name} {existing_admin.last_name}"}), 400
     
     user.user_type = user_type
 

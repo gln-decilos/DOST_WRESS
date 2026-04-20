@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
-JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-this-in-production-make-it-at-least-32-characters-long')
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z')
 JWT_EXPIRATION_HOURS = 24
 
 def generate_token(user_id):
