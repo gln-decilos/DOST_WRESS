@@ -27,7 +27,7 @@ function OrgAdminDashboardContent({
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="text-center">
           <div className="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent mx-auto"></div>
-          <p className="text-muted-foreground">Loading dashboard...</p>
+          <p className="text-muted-foreground">Loading..</p>
         </div>
       </div>
     )

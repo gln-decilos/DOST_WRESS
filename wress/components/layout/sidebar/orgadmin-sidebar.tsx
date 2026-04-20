@@ -9,6 +9,7 @@ import {
   Shield,
   FileText,
   Users,
+  FolderKanban,
   ChevronFirst,
   ChevronLast,
 } from "lucide-react"
@@ -33,6 +34,11 @@ const menuItems = [
     href: "/org-admin/roles",
     label: "Roles",
     icon: Shield,
+  },
+  {
+    href: "/org-admin/projects",
+    label: "Projects",
+    icon: FolderKanban,
   },
   {
     href: "/org-admin/templates",
@@ -60,7 +66,6 @@ export default function AppSidebar() {
         }`}
       aria-label="Primary navigation"
     >
-      {/* HEADER */}
       <div className="flex items-center justify-between gap-2 px-4 py-5">
         <div className="flex items-center gap-2">
           <div className="grid size-9 place-items-center rounded-xl bg-white/20 font-bold">
@@ -85,7 +90,6 @@ export default function AppSidebar() {
         </button>
       </div>
 
-      {/* NAVIGATION */}
       <nav className="mt-2 flex-1">
         <ul className="flex flex-col gap-1 px-3">
           {menuItems.map(({ href, label, icon: Icon }) => {
@@ -117,7 +121,6 @@ export default function AppSidebar() {
         </ul>
       </nav>
 
-      {/* FOOTER */}
       <div className="px-3 pb-5 pt-2">
         <div className="rounded-2xl bg-white/10 p-3">
           <p className="text-xs leading-5">
