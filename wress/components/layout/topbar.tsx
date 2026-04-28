@@ -33,17 +33,48 @@ type AuthUser = {
   roles: UserRole[]
 }
 
-const API_BASE_URL = "http://localhost:5000/api/auth"
+type NotificationItem = {
+  id: number
+  title: string
+  message: string
+  type: string
+  link?: string | null
+  is_read: boolean
+  created_at?: string | null
+}
+
+const AUTH_API_BASE_URL = "http://localhost:5000/api/auth"
+const API_BASE_URL = "http://localhost:5000/api"
 
 export function Topbar({ onMenuClick }: TopbarProps) {
   const router = useRouter()
+
   const [q, setQ] = useState("")
   const [user, setUser] = useState<AuthUser | null>(null)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  const fetchNotifications = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/notifications`, {
+        method: "GET",
+        credentials: "include",
+      })
+
+      if (!response.ok) return
+
+      const data = await response.json()
+      setNotifications(data.notifications || [])
+      setUnreadCount(data.unread_count || 0)
+    } catch (error) {
+      console.error("Failed to load notifications:", error)
+    }
+  }
 
   useEffect(() => {
     const fetchCurrentUser = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/me`, {
+        const response = await fetch(`${AUTH_API_BASE_URL}/me`, {
           method: "GET",
           credentials: "include",
         })
@@ -58,6 +89,11 @@ export function Topbar({ onMenuClick }: TopbarProps) {
     }
 
     fetchCurrentUser()
+    fetchNotifications()
+
+    const interval = window.setInterval(fetchNotifications, 15000)
+
+    return () => window.clearInterval(interval)
   }, [])
 
   const initials = useMemo(() => {
@@ -78,9 +114,39 @@ export function Topbar({ onMenuClick }: TopbarProps) {
     return "/profile"
   }, [user])
 
+  const handleNotificationClick = async (notification: NotificationItem) => {
+    try {
+      await fetch(`${API_BASE_URL}/notifications/${notification.id}/read`, {
+        method: "PATCH",
+        credentials: "include",
+      })
+
+      await fetchNotifications()
+
+      if (notification.link) {
+        router.push(notification.link)
+      }
+    } catch (error) {
+      console.error("Failed to open notification:", error)
+    }
+  }
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/notifications/read-all`, {
+        method: "PATCH",
+        credentials: "include",
+      })
+
+      await fetchNotifications()
+    } catch (error) {
+      console.error("Failed to mark all notifications as read:", error)
+    }
+  }
+
   const handleLogout = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/signout`, {
+      const response = await fetch(`${AUTH_API_BASE_URL}/signout`, {
         method: "POST",
         credentials: "include",
       })
@@ -124,24 +190,59 @@ export function Topbar({ onMenuClick }: TopbarProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={(open) => open && fetchNotifications()}>
             <DropdownMenuTrigger className="relative rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2">
               <Bell className="size-5" aria-hidden />
               <span className="sr-only">Open notifications</span>
-              <span className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">
-                3
-              </span>
+
+              {unreadCount > 0 && (
+                <span className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+
+            <DropdownMenuContent align="end" className="w-80">
+              <div className="flex items-center justify-between px-2 py-1.5">
+                <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
+
+                {unreadCount > 0 && (
+                  <button
+                    onClick={handleMarkAllAsRead}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Mark all as read
+                  </button>
+                )}
+              </div>
+
               <DropdownMenuSeparator />
-              <DropdownMenuItem>Washer cycle completed</DropdownMenuItem>
-              <DropdownMenuItem>Front door locked</DropdownMenuItem>
-              <DropdownMenuItem>HVAC filter reminder</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-muted-foreground">
-                View all
-              </DropdownMenuItem>
+
+              {notifications.length === 0 ? (
+                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  No notifications yet
+                </div>
+              ) : (
+                notifications.map((notification) => (
+                  <DropdownMenuItem
+                    key={notification.id}
+                    onClick={() => handleNotificationClick(notification)}
+                    className="flex cursor-pointer flex-col items-start gap-1 whitespace-normal"
+                  >
+                    <div className="flex w-full items-start justify-between gap-2">
+                      <p className="text-sm font-medium">{notification.title}</p>
+
+                      {!notification.is_read && (
+                        <span className="mt-1 size-2 rounded-full bg-red-500" />
+                      )}
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      {notification.message}
+                    </p>
+                  </DropdownMenuItem>
+                ))
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -150,6 +251,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <Settings className="size-5" aria-hidden />
               <span className="sr-only">Open settings</span>
             </DropdownMenuTrigger>
+
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>Settings</DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -176,6 +278,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               </Avatar>
               <span className="sr-only">Open user menu</span>
             </DropdownMenuTrigger>
+
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="flex items-center gap-2">
                 <User className="size-4" />
