@@ -24,7 +24,7 @@ const menuItems = [
     icon: User,
   },
   {
-    href: "/stakeholder/projects",
+    href: "/stakeholder/projects/projects-page",
     label: "Projects",
     icon: FileText,
   },

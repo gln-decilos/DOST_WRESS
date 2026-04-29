@@ -45,7 +45,7 @@ type NotificationItem = {
 }
 
 const AUTH_API_BASE_URL = "http://localhost:5000/api/auth"
-const API_BASE_URL = "http://localhost:5000/api"
+const NOTIF_API_BASE_URL = "http://localhost:5000/api"
 
 export function Topbar({ onMenuClick }: TopbarProps) {
   const router = useRouter()
@@ -55,38 +55,21 @@ export function Topbar({ onMenuClick }: TopbarProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
 
-  const fetchNotifications = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/notifications`, {
-        method: "GET",
-        credentials: "include",
-      })
-
-      if (!response.ok) return
-
-      const data = await response.json()
-      setNotifications(data.notifications || [])
-      setUnreadCount(data.unread_count || 0)
-    } catch (error) {
-      console.error("Failed to load notifications:", error)
-    }
-  }
   const hasFetched = useRef(false)
 
+  // =========================
+  // FETCH USER
+  // =========================
   useEffect(() => {
-    // Prevent multiple fetches
     if (hasFetched.current) return
     hasFetched.current = true
 
     const fetchCurrentUser = async () => {
       try {
         const token = localStorage.getItem("token")
+        if (!token) return
 
-        if (!token) {
-          return
-        }
-
-        const response = await fetch(`${API_BASE_URL}/me`, {
+        const response = await fetch(`${AUTH_API_BASE_URL}/me`, {
           method: "GET",
           headers: {
             "Authorization": `Bearer ${token}`,
@@ -96,7 +79,6 @@ export function Topbar({ onMenuClick }: TopbarProps) {
 
         if (!response.ok) {
           if (response.status === 401) {
-            // Token expired or invalid
             localStorage.removeItem("token")
             localStorage.removeItem("user")
             router.push("/signin")
@@ -112,40 +94,54 @@ export function Topbar({ onMenuClick }: TopbarProps) {
     }
 
     fetchCurrentUser()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router])
+
+  // =========================
+  // FETCH NOTIFICATIONS
+  // =========================
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token")
+      if (!token) return
+
+      const response = await fetch(`${NOTIF_API_BASE_URL}/notifications`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      })
+
+      if (!response.ok) return
+
+      const data = await response.json()
+      setNotifications(data.notifications || [])
+      setUnreadCount(data.unread_count || 0)
+    } catch (error) {
+      console.error("Failed to load notifications:", error)
+    }
+  }, [])
+
+  useEffect(() => {
     fetchNotifications()
 
     const interval = window.setInterval(fetchNotifications, 15000)
-
     return () => window.clearInterval(interval)
-  }, []) // Empty dependency array - only run once on mount
+  }, [fetchNotifications])
 
-  const initials = useMemo(() => {
-    if (!user) return "U"
-
-    const first = user.first_name?.charAt(0) || ""
-    const last = user.last_name?.charAt(0) || ""
-
-    return `${first}${last}`.toUpperCase() || "U"
-  }, [user])
-
-  const profileHref = useMemo(() => {
-    const roleNames = user?.roles?.map((role) => role.name) || []
-    const userType = user?.user_type
-
-    if (roleNames.includes("Administrator") || userType === "System Admin")
-      return "/admin/profile"
-    if (roleNames.includes("Business Analyst") || userType === "Organization Admin")
-      return "/business-analyst/profile"
-
-    return "/profile"
-  }, [user])
-
+  // =========================
+  // HANDLERS
+  // =========================
   const handleNotificationClick = async (notification: NotificationItem) => {
     try {
-      await fetch(`${API_BASE_URL}/notifications/${notification.id}/read`, {
+      const token = localStorage.getItem("token")
+
+      await fetch(`${NOTIF_API_BASE_URL}/notifications/${notification.id}/read`, {
         method: "PATCH",
-        credentials: "include",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
       })
 
       await fetchNotifications()
@@ -160,14 +156,19 @@ export function Topbar({ onMenuClick }: TopbarProps) {
 
   const handleMarkAllAsRead = async () => {
     try {
-      await fetch(`${API_BASE_URL}/notifications/read-all`, {
+      const token = localStorage.getItem("token")
+
+      await fetch(`${NOTIF_API_BASE_URL}/notifications/read-all`, {
         method: "PATCH",
-        credentials: "include",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
       })
 
       await fetchNotifications()
     } catch (error) {
-      console.error("Failed to mark all notifications as read:", error)
+      console.error("Failed to mark all notifications:", error)
     }
   }
 
@@ -175,78 +176,93 @@ export function Topbar({ onMenuClick }: TopbarProps) {
     try {
       const token = localStorage.getItem("token")
 
-      // Attempt to notify server about logout (don't wait for response)
       if (token) {
-        fetch(`${API_BASE_URL}/signout`, {
+        fetch(`${AUTH_API_BASE_URL}/signout`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-        }).catch(err => console.error("Logout notification error:", err))
+        }).catch(() => { })
       }
-    } catch (error) {
-      console.error("Logout error:", error)
     } finally {
-      // Always clear local storage regardless of server response
       localStorage.removeItem("token")
       localStorage.removeItem("user")
       sessionStorage.clear()
-
-      // Redirect to signin page
       router.push("/signin")
       router.refresh()
     }
   }, [router])
 
+  // =========================
+  // UI HELPERS
+  // =========================
+  const initials = useMemo(() => {
+    if (!user) return "U"
+    return `${user.first_name?.[0] || ""}${user.last_name?.[0] || ""}`.toUpperCase() || "U"
+  }, [user])
+
+  const profileHref = useMemo(() => {
+    const roleNames = user?.roles?.map((r) => r.name) || []
+    const userType = user?.user_type
+
+    if (roleNames.includes("Administrator") || userType === "System Admin")
+      return "/admin/profile"
+
+    if (roleNames.includes("Business Analyst") || userType === "Organization Admin")
+      return "/business-analyst/profile"
+
+    return "/profile"
+  }, [user])
+
+  // =========================
+  // RENDER
+  // =========================
   return (
-    <header className="sticky top-0 z-30 mb-6 rounded-xl border-b border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 lg:-mx-7 lg:rounded-none">
-      {/* Rest of your JSX remains the same */}
+    <header className="sticky top-0 z-30 mb-6 rounded-xl border-b border-border bg-background/80 backdrop-blur lg:-mx-7 lg:rounded-none">
       <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-7">
+
+        {/* MENU */}
         <button
           onClick={onMenuClick}
-          className="rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2 lg:hidden"
-          aria-label="Open menu"
+          className="rounded-full p-2 hover:bg-muted lg:hidden"
         >
           <Menu className="size-5" />
         </button>
 
+        {/* SEARCH */}
         <div className="max-w-xl flex-1">
-          <label className="relative block">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-              <Search className="size-4" />
-            </span>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search here"
-              className="w-full rounded-full border bg-background py-2 pl-9 pr-3 text-sm"
-              aria-label="Search"
-            />
-          </label>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search here"
+            className="w-full rounded-full border py-2 pl-3 pr-3 text-sm"
+          />
         </div>
 
+        {/* RIGHT SIDE */}
         <div className="flex items-center gap-2">
+
+          {/* 🔔 NOTIFICATIONS */}
           <DropdownMenu onOpenChange={(open) => open && fetchNotifications()}>
-            <DropdownMenuTrigger className="relative rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2">
-              <Bell className="size-5" aria-hidden />
-              <span className="sr-only">Open notifications</span>
+            <DropdownMenuTrigger className="relative rounded-full p-2 hover:bg-muted">
+              <Bell className="size-5" />
 
               {unreadCount > 0 && (
-                <span className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">
+                <span className="absolute right-1 top-1 text-[10px] bg-red-500 text-white px-1 rounded-full">
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
             </DropdownMenuTrigger>
 
             <DropdownMenuContent align="end" className="w-80">
-              <div className="flex items-center justify-between px-2 py-1.5">
-                <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
+              <div className="flex justify-between px-2 py-1">
+                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
 
                 {unreadCount > 0 && (
                   <button
                     onClick={handleMarkAllAsRead}
-                    className="text-xs text-muted-foreground hover:text-foreground"
+                    className="text-xs text-muted-foreground"
                   >
                     Mark all as read
                   </button>
@@ -256,85 +272,70 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <DropdownMenuSeparator />
 
               {notifications.length === 0 ? (
-                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No notifications yet
+                <div className="text-center text-sm py-4">
+                  No notifications
                 </div>
               ) : (
-                notifications.map((notification) => (
+                notifications.map((n) => (
                   <DropdownMenuItem
-                    key={notification.id}
-                    onClick={() => handleNotificationClick(notification)}
-                    className="flex cursor-pointer flex-col items-start gap-1 whitespace-normal"
+                    key={n.id}
+                    onClick={() => handleNotificationClick(n)}
+                    className="flex flex-col items-start"
                   >
-                    <div className="flex w-full items-start justify-between gap-2">
-                      <p className="text-sm font-medium">{notification.title}</p>
-
-                      {!notification.is_read && (
-                        <span className="mt-1 size-2 rounded-full bg-red-500" />
+                    <div className="flex w-full justify-between">
+                      <span className="font-medium text-sm">{n.title}</span>
+                      {!n.is_read && (
+                        <span className="w-2 h-2 bg-red-500 rounded-full mt-1" />
                       )}
                     </div>
-
-                    <p className="text-xs text-muted-foreground">
-                      {notification.message}
-                    </p>
+                    <span className="text-xs text-muted-foreground">
+                      {n.message}
+                    </span>
                   </DropdownMenuItem>
                 ))
               )}
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {/* ⚙️ SETTINGS */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="rounded-full p-2 hover:bg-muted focus:outline-none focus:ring-2">
-              <Settings className="size-5" aria-hidden />
-              <span className="sr-only">Open settings</span>
+            <DropdownMenuTrigger className="rounded-full p-2 hover:bg-muted">
+              <Settings className="size-5" />
             </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>Settings</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <button className="w-full text-left">Manage users</button>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <button className="w-full text-left">Network</button>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <div className="px-2 py-1.5">
-                <ThemeToggle />
-              </div>
-              <div className="px-2 pb-2">
-                <ColorThemePicker />
-              </div>
+            <DropdownMenuContent align="end">
+              <ThemeToggle />
+              <ColorThemePicker />
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {/* 👤 USER */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="rounded-full p-1.5 hover:bg-muted focus:outline-none focus:ring-2">
+            <DropdownMenuTrigger className="rounded-full p-1.5 hover:bg-muted">
               <Avatar className="size-8">
                 <AvatarFallback>{initials}</AvatarFallback>
               </Avatar>
-              <span className="sr-only">Open user menu</span>
             </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel className="flex items-center gap-2">
-                <User className="size-4" />
-                {user ? `Signed in as ${user.full_name}` : "Signed in"}
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>
+                {user ? user.full_name : "User"}
               </DropdownMenuLabel>
-              <DropdownMenuSeparator />
+
               <DropdownMenuItem asChild>
                 <a href={profileHref}>Profile</a>
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
+
               <DropdownMenuItem
                 onClick={handleLogout}
-                className="flex items-center gap-2 text-destructive cursor-pointer"
+                className="text-destructive"
               >
-                <LogOut className="size-4" />
+                <LogOut className="size-4 mr-2" />
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
         </div>
       </div>
     </header>

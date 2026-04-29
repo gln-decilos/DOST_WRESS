@@ -12,7 +12,6 @@ import {
   updateAdminTemplate,
 } from "@/features/templates/api"
 import type { DocumentTemplate } from "@/features/templates/types"
-import usePermissions from "@/features/access/use-permissions"
 
 const ITEMS_PER_PAGE = 5
 const ACTION_MENU_WIDTH = 192
@@ -59,12 +58,6 @@ function getModuleLabel(module: string) {
 
 export default function TemplatesPageView() {
   const router = useRouter()
-  const { loading: permissionsLoading, hasPermission } = usePermissions()
-
-  const canViewTemplates = hasPermission("templates.view")
-  const canCreateTemplates = hasPermission("templates.create")
-  const canEditTemplates = hasPermission("templates.edit")
-  const canDeleteTemplates = hasPermission("templates.delete")
 
   const [templates, setTemplates] = useState<DocumentTemplate[]>([])
   const [selectedTemplate, setSelectedTemplate] =
@@ -109,13 +102,9 @@ export default function TemplatesPageView() {
   }
 
   useEffect(() => {
-    if (!permissionsLoading && canViewTemplates) {
-      fetchTemplates()
-    } else if (!permissionsLoading && !canViewTemplates) {
-      setFetching(false)
-    }
+    fetchTemplates()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permissionsLoading, canViewTemplates, selectedModuleFilter])
+  }, [selectedModuleFilter])
 
   useEffect(() => {
     const handleOutsideClick = () => {
@@ -167,8 +156,6 @@ export default function TemplatesPageView() {
   }
 
   const openAddModal = () => {
-    if (!canCreateTemplates) return
-
     setIsAddMode(true)
     setSelectedTemplate({
       ...emptyTemplate,
@@ -180,8 +167,6 @@ export default function TemplatesPageView() {
   }
 
   const openEditMetaModal = (template: DocumentTemplate) => {
-    if (!canEditTemplates) return
-
     setIsAddMode(false)
     setSelectedTemplate({
       id: template.id,
@@ -205,8 +190,6 @@ export default function TemplatesPageView() {
   }
 
   const openDeleteModal = (template: DocumentTemplate) => {
-    if (!canDeleteTemplates) return
-
     setTemplateToDelete(template)
     setIsDeleteModalOpen(true)
     setOpenMenuId(null)
@@ -348,26 +331,6 @@ export default function TemplatesPageView() {
     }
   }
 
-  if (permissionsLoading) {
-    return (
-      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
-        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
-          Loading permissions...
-        </div>
-      </section>
-    )
-  }
-
-  if (!canViewTemplates) {
-    return (
-      <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
-        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
-          You do not have permission to view templates.
-        </div>
-      </section>
-    )
-  }
-
   return (
     <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -396,14 +359,12 @@ export default function TemplatesPageView() {
             </select>
           </div>
 
-          {canCreateTemplates && (
-            <button
-              onClick={openAddModal}
-              className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-            >
-              Add Template
-            </button>
-          )}
+          <button
+            onClick={openAddModal}
+            className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+          >
+            Add Template
+          </button>
         </div>
       </div>
 
@@ -494,8 +455,8 @@ export default function TemplatesPageView() {
                   key={page}
                   onClick={() => setCurrentPage(page)}
                   className={`rounded-lg px-3 py-1.5 text-sm ${currentPage === page
-                      ? "bg-primary text-primary-foreground"
-                      : "border border-border text-foreground hover:bg-muted"
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-border text-foreground hover:bg-muted"
                     }`}
                 >
                   {page}
@@ -524,38 +485,32 @@ export default function TemplatesPageView() {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="py-1 text-sm">
-            {canEditTemplates && (
-              <button
-                onClick={() => {
-                  router.push(`/templates/${activeMenuTemplate.id}`)
-                  setOpenMenuId(null)
-                  setMenuPosition(null)
-                }}
-                className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
-              >
-                Edit Structure
-              </button>
-            )}
+            <button
+              onClick={() => {
+                router.push(`/org-admin/template-edit?id=${activeMenuTemplate.id}`)
+                setOpenMenuId(null)
+                setMenuPosition(null)
+              }}
+              className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
+            >
+              Edit Structure
+            </button>
 
-            {canEditTemplates && (
-              <button
-                onClick={() => openEditMetaModal(activeMenuTemplate)}
-                className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
-              >
-                Edit Info
-              </button>
-            )}
+            <button
+              onClick={() => openEditMetaModal(activeMenuTemplate)}
+              className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
+            >
+              Edit Info
+            </button>
 
-            {canCreateTemplates && (
-              <button
-                onClick={() => handleDuplicate(activeMenuTemplate.id)}
-                className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
-              >
-                Duplicate
-              </button>
-            )}
+            <button
+              onClick={() => handleDuplicate(activeMenuTemplate.id)}
+              className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
+            >
+              Duplicate
+            </button>
 
-            {canEditTemplates && !activeMenuTemplate.is_default && (
+            {!activeMenuTemplate.is_default && (
               <button
                 onClick={() => handleSetDefault(activeMenuTemplate.id)}
                 className="block w-full px-4 py-2 text-left text-foreground hover:bg-muted"
@@ -564,14 +519,12 @@ export default function TemplatesPageView() {
               </button>
             )}
 
-            {canDeleteTemplates && (
-              <button
-                onClick={() => openDeleteModal(activeMenuTemplate)}
-                className="block w-full px-4 py-2 text-left text-red-600 hover:bg-red-50"
-              >
-                Delete
-              </button>
-            )}
+            <button
+              onClick={() => openDeleteModal(activeMenuTemplate)}
+              className="block w-full px-4 py-2 text-left text-red-600 hover:bg-red-50"
+            >
+              Delete
+            </button>
           </div>
         </div>
       )}

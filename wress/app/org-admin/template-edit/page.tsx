@@ -1,7 +1,7 @@
 "use client"
 
+import { useSearchParams, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
 import {
   Plus,
   Pencil,
@@ -27,11 +27,6 @@ import type {
   TemplateField,
   TemplateSection,
 } from "@/features/templates/types"
-import usePermissions from "@/features/access/use-permissions"
-
-type Props = {
-  templateId: number
-}
 
 type TemplateInfoForm = {
   name: string
@@ -104,12 +99,11 @@ function getFieldTypeBadgeClass(fieldType: string) {
   }
 }
 
-export default function TemplateEditorPageView({ templateId }: Props) {
+export default function TemplateEditPage() {
   const router = useRouter()
-  const { loading: permissionsLoading, hasPermission } = usePermissions()
-
-  const canViewTemplates = hasPermission("templates.view")
-  const canEditTemplates = hasPermission("templates.edit")
+  const searchParams = useSearchParams()
+  const templateId = searchParams.get('id')
+  const templateIdNumber = templateId ? parseInt(templateId) : null
 
   const [template, setTemplate] = useState<DocumentTemplate | null>(null)
   const [fetching, setFetching] = useState(true)
@@ -130,11 +124,19 @@ export default function TemplateEditorPageView({ templateId }: Props) {
   const [sectionForm, setSectionForm] = useState<SectionForm>(emptySectionForm)
   const [fieldForm, setFieldForm] = useState<FieldForm>(emptyFieldForm)
 
+  // Delete modal states
+  const [deleteSectionModalOpen, setDeleteSectionModalOpen] = useState(false)
+  const [deleteFieldModalOpen, setDeleteFieldModalOpen] = useState(false)
+  const [sectionToDelete, setSectionToDelete] = useState<TemplateSection | null>(null)
+  const [fieldToDelete, setFieldToDelete] = useState<TemplateField | null>(null)
+
   const fetchTemplate = async () => {
+    if (!templateIdNumber) return
+
     try {
       setFetching(true)
       setMessage("")
-      const data = await getAdminTemplate(templateId)
+      const data = await getAdminTemplate(templateIdNumber)
       setTemplate(data)
       setTemplateInfo({
         name: data.name,
@@ -145,19 +147,17 @@ export default function TemplateEditorPageView({ templateId }: Props) {
       })
     } catch (error) {
       console.error("Failed to fetch template:", error)
-      setMessage("Failed to fetch template")
+      setMessage("Failed to fetch template. Please make sure you are logged in.")
     } finally {
       setFetching(false)
     }
   }
 
   useEffect(() => {
-    if (!permissionsLoading && canViewTemplates) {
+    if (templateIdNumber) {
       fetchTemplate()
-    } else if (!permissionsLoading && !canViewTemplates) {
-      setFetching(false)
     }
-  }, [permissionsLoading, canViewTemplates, templateId])
+  }, [templateIdNumber])
 
   const handleTemplateInfoChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -176,12 +176,13 @@ export default function TemplateEditorPageView({ templateId }: Props) {
 
   const saveTemplateInfo = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!templateIdNumber) return
 
     try {
       setLoading(true)
       setMessage("")
 
-      await updateAdminTemplate(templateId, {
+      await updateAdminTemplate(templateIdNumber, {
         name: templateInfo.name,
         code: templateInfo.code,
         description: templateInfo.description,
@@ -200,7 +201,6 @@ export default function TemplateEditorPageView({ templateId }: Props) {
   }
 
   const openAddSectionModal = () => {
-    if (!canEditTemplates) return
     setEditingSection(null)
     setSectionForm({
       ...emptySectionForm,
@@ -210,7 +210,6 @@ export default function TemplateEditorPageView({ templateId }: Props) {
   }
 
   const openEditSectionModal = (section: TemplateSection) => {
-    if (!canEditTemplates) return
     setEditingSection(section)
     setSectionForm({
       title: section.title,
@@ -228,7 +227,6 @@ export default function TemplateEditorPageView({ templateId }: Props) {
   }
 
   const openAddFieldModal = (sectionId: number, fieldsCount: number) => {
-    if (!canEditTemplates) return
     setTargetSectionId(sectionId)
     setEditingField(null)
     setFieldForm({
@@ -239,7 +237,6 @@ export default function TemplateEditorPageView({ templateId }: Props) {
   }
 
   const openEditFieldModal = (sectionId: number, field: TemplateField) => {
-    if (!canEditTemplates) return
     setTargetSectionId(sectionId)
     setEditingField(field)
     setFieldForm({
@@ -299,6 +296,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
 
   const handleSaveSection = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!templateIdNumber) return
 
     try {
       setLoading(true)
@@ -308,7 +306,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
         await updateTemplateSection(editingSection.id, sectionForm)
         setMessage("Section updated successfully")
       } else {
-        await createTemplateSection(templateId, sectionForm)
+        await createTemplateSection(templateIdNumber, sectionForm)
         setMessage("Section created successfully")
       }
 
@@ -322,18 +320,27 @@ export default function TemplateEditorPageView({ templateId }: Props) {
     }
   }
 
-  const handleDeleteSection = async (sectionId: number) => {
-    if (!canEditTemplates) return
+  // Delete Section Modal Handlers
+  const openDeleteSectionModal = (section: TemplateSection) => {
+    setSectionToDelete(section)
+    setDeleteSectionModalOpen(true)
+  }
 
-    const confirmed = window.confirm("Delete this section and its fields?")
-    if (!confirmed) return
+  const closeDeleteSectionModal = () => {
+    setSectionToDelete(null)
+    setDeleteSectionModalOpen(false)
+  }
+
+  const confirmDeleteSection = async () => {
+    if (!sectionToDelete?.id) return
 
     try {
       setLoading(true)
       setMessage("")
-      await deleteTemplateSection(sectionId)
+      await deleteTemplateSection(sectionToDelete.id)
       setMessage("Section deleted successfully")
       await fetchTemplate()
+      closeDeleteSectionModal()
     } catch (error) {
       console.error("Failed to delete section:", error)
       setMessage(error instanceof Error ? error.message : "Failed to delete section")
@@ -342,9 +349,37 @@ export default function TemplateEditorPageView({ templateId }: Props) {
     }
   }
 
+  // Delete Field Modal Handlers
+  const openDeleteFieldModal = (field: TemplateField) => {
+    setFieldToDelete(field)
+    setDeleteFieldModalOpen(true)
+  }
+
+  const closeDeleteFieldModal = () => {
+    setFieldToDelete(null)
+    setDeleteFieldModalOpen(false)
+  }
+
+  const confirmDeleteField = async () => {
+    if (!fieldToDelete?.id) return
+
+    try {
+      setLoading(true)
+      setMessage("")
+      await deleteTemplateField(fieldToDelete.id)
+      setMessage("Field deleted successfully")
+      await fetchTemplate()
+      closeDeleteFieldModal()
+    } catch (error) {
+      console.error("Failed to delete field:", error)
+      setMessage(error instanceof Error ? error.message : "Failed to delete field")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleSaveField = async (e: React.FormEvent) => {
     e.preventDefault()
-
     if (!targetSectionId) return
 
     try {
@@ -369,41 +404,20 @@ export default function TemplateEditorPageView({ templateId }: Props) {
     }
   }
 
-  const handleDeleteField = async (fieldId: number) => {
-    if (!canEditTemplates) return
-
-    const confirmed = window.confirm("Delete this field?")
-    if (!confirmed) return
-
-    try {
-      setLoading(true)
-      setMessage("")
-      await deleteTemplateField(fieldId)
-      setMessage("Field deleted successfully")
-      await fetchTemplate()
-    } catch (error) {
-      console.error("Failed to delete field:", error)
-      setMessage(error instanceof Error ? error.message : "Failed to delete field")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (permissionsLoading) {
+  // Check if templateId is missing
+  if (!templateIdNumber) {
     return (
       <section className="w-full rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
         <div className="rounded-2xl bg-background p-10 text-center text-muted-foreground ring-1 ring-border">
-          Loading permissions...
-        </div>
-      </section>
-    )
-  }
-
-  if (!canViewTemplates) {
-    return (
-      <section className="w-full rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
-        <div className="rounded-2xl bg-background p-10 text-center text-muted-foreground ring-1 ring-border">
-          You do not have permission to view this template.
+          <h2 className="text-lg font-semibold mb-2">No Template Selected</h2>
+          <p>Please go back and select a template to edit.</p>
+          <button
+            onClick={() => router.push("/org-admin/templates")}
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back to Templates
+          </button>
         </div>
       </section>
     )
@@ -423,7 +437,15 @@ export default function TemplateEditorPageView({ templateId }: Props) {
     return (
       <section className="w-full rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
         <div className="rounded-2xl bg-background p-10 text-center text-muted-foreground ring-1 ring-border">
-          Template not found.
+          <h2 className="text-lg font-semibold mb-2">Template not found</h2>
+          <p>The template you're looking for doesn't exist or you don't have access to it.</p>
+          <button
+            onClick={() => router.push("/org-admin/templates")}
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back to Templates
+          </button>
         </div>
       </section>
     )
@@ -445,7 +467,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
 
             <p className="mt-2 text-sm text-white/85 md:text-base">
               Configure template information, organize sections, and define the
-              fields that business analysts will use in Vision &amp; Scope documents.
+              fields that business analysts will use in documents.
             </p>
 
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
@@ -465,7 +487,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
           </div>
 
           <button
-            onClick={() => router.push("/templates")}
+            onClick={() => router.push("/org-admin/templates")}
             className="inline-flex items-center gap-2 self-start rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-100"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -475,7 +497,10 @@ export default function TemplateEditorPageView({ templateId }: Props) {
       </div>
 
       {message && (
-        <div className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground shadow-sm">
+        <div className={`rounded-2xl border px-4 py-3 text-sm shadow-sm ${message.includes("successfully")
+          ? "border-green-200 bg-green-50 text-green-700"
+          : "border-red-200 bg-red-50 text-red-700"
+          }`}>
           {message}
         </div>
       )}
@@ -571,7 +596,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={loading || !canEditTemplates}
+                disabled={loading}
                 className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-60"
               >
                 {loading ? "Saving..." : "Save Template Info"}
@@ -596,15 +621,13 @@ export default function TemplateEditorPageView({ templateId }: Props) {
               </div>
             </div>
 
-            {canEditTemplates && (
-              <button
-                onClick={openAddSectionModal}
-                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
-              >
-                <Plus className="h-4 w-4" />
-                Add Section
-              </button>
-            )}
+            <button
+              onClick={openAddSectionModal}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4" />
+              Add Section
+            </button>
           </div>
 
           <div className="space-y-5">
@@ -657,35 +680,33 @@ export default function TemplateEditorPageView({ templateId }: Props) {
                         </div>
                       </div>
 
-                      {canEditTemplates && (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() =>
-                              openAddFieldModal(section.id, section.fields.length)
-                            }
-                            className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
-                          >
-                            <Plus className="h-4 w-4" />
-                            Add Field
-                          </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() =>
+                            openAddFieldModal(section.id, section.fields.length)
+                          }
+                          className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Add Field
+                        </button>
 
-                          <button
-                            onClick={() => openEditSectionModal(section)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
-                          >
-                            <Pencil className="h-4 w-4" />
-                            Edit
-                          </button>
+                        <button
+                          onClick={() => openEditSectionModal(section)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit
+                        </button>
 
-                          <button
-                            onClick={() => handleDeleteSection(section.id)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Delete
-                          </button>
-                        </div>
-                      )}
+                        <button
+                          onClick={() => openDeleteSectionModal(section)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -755,27 +776,25 @@ export default function TemplateEditorPageView({ templateId }: Props) {
                                 </div>
                               </div>
 
-                              {canEditTemplates && (
-                                <div className="flex shrink-0 flex-wrap gap-2">
-                                  <button
-                                    onClick={() =>
-                                      openEditFieldModal(section.id, field)
-                                    }
-                                    className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                    Edit
-                                  </button>
+                              <div className="flex shrink-0 flex-wrap gap-2">
+                                <button
+                                  onClick={() =>
+                                    openEditFieldModal(section.id, field)
+                                  }
+                                  className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                  Edit
+                                </button>
 
-                                  <button
-                                    onClick={() => handleDeleteField(field.id)}
-                                    className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
+                                <button
+                                  onClick={() => openDeleteFieldModal(field)}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -789,6 +808,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
         </div>
       </div>
 
+      {/* Section Modal */}
       {sectionModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
           <div className="flex min-h-full items-center justify-center py-6">
@@ -888,6 +908,7 @@ export default function TemplateEditorPageView({ templateId }: Props) {
         </div>
       )}
 
+      {/* Field Modal */}
       {fieldModalOpen && (
         <div className="fixed inset-0 z-[60] overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
           <div className="flex min-h-full items-center justify-center py-6">
@@ -1056,6 +1077,80 @@ export default function TemplateEditorPageView({ templateId }: Props) {
                   </div>
                 </form>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Section Modal */}
+      {deleteSectionModalOpen && sectionToDelete && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">Delete Section</h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-foreground">
+                {sectionToDelete.title}
+              </span>
+              ? This will also delete all fields inside this section. This action cannot be undone.
+            </p>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeDeleteSectionModal}
+                disabled={loading}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmDeleteSection}
+                disabled={loading}
+                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
+              >
+                {loading ? "Deleting..." : "Confirm Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Field Modal */}
+      {deleteFieldModalOpen && fieldToDelete && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">Delete Field</h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-foreground">
+                {fieldToDelete.label}
+              </span>
+              ? This action cannot be undone.
+            </p>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeDeleteFieldModal}
+                disabled={loading}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmDeleteField}
+                disabled={loading}
+                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
+              >
+                {loading ? "Deleting..." : "Confirm Delete"}
+              </button>
             </div>
           </div>
         </div>
