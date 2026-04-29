@@ -1,21 +1,64 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 from datetime import datetime
+from functools import wraps
 from app.extensions import db
 from app.models.project import Project
-# from app.utils.permissions import require_permission  # Comment out or remove
+from app.models.user import User
+from app.models.user_roles import UserRole
+import jwt
+import os
 
 business_project_bp = Blueprint("business_project_bp", __name__)
 
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z')
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Authentication required"}), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
+            g.user_id = payload['user_id']
+            g.user = User.query.get(g.user_id)
+            
+            if not g.user:
+                return jsonify({"error": "User not found"}), 401
+            
+            if not g.user.is_active:
+                return jsonify({"error": "User account is deactivated"}), 401
+                
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"error": "Invalid token"}), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
 @business_project_bp.route("/projects", methods=["GET"])
-# @require_permission("project.view")  # COMMENT THIS OUT or remove
+@login_required
 def get_projects():
-    projects = Project.query.order_by(Project.created_at.desc()).all()
+    current_user = g.user
+    
+    user_project_roles = UserRole.query.filter_by(user_id=current_user.id).all()
+    
+    project_ids = [ur.project_id for ur in user_project_roles if ur.project_id is not None]
+    
+    if not project_ids:
+        return jsonify([]), 200
+    
+    projects = Project.query.filter(Project.id.in_(project_ids)).order_by(Project.created_at.desc()).all()
+    
     return jsonify([project.to_dict() for project in projects]), 200
 
-
 @business_project_bp.route("/projects", methods=["POST"])
-# @require_permission("project.create")  # COMMENT THIS OUT or remove
+@login_required
 def create_project():
     data = request.get_json() or {}
 
@@ -56,6 +99,22 @@ def create_project():
     )
 
     db.session.add(project)
+    db.session.flush()
+    
+    from app.models.role import Role
+    member_role = Role.query.filter_by(name="Project Member").first()
+    if not member_role:
+        member_role = Role(name="Project Member", description="Project team member")
+        db.session.add(member_role)
+        db.session.flush()
+    
+    user_role = UserRole(
+        project_id=project.id,
+        user_id=g.user.id,
+        role_id=member_role.id
+    )
+    db.session.add(user_role)
+    
     db.session.commit()
 
     return jsonify({
@@ -63,10 +122,12 @@ def create_project():
         "project": project.to_dict()
     }), 201
 
-
 @business_project_bp.route("/project/<int:project_id>/archive", methods=["PATCH"])
-# @require_permission("project.edit")  # COMMENT THIS OUT or remove
+@login_required
 def archive_project(project_id):
+    if not user_has_project_access(g.user.id, project_id):
+        return jsonify({"message": "You don't have permission to access this project"}), 403
+    
     project = Project.query.get(project_id)
 
     if not project:
@@ -80,10 +141,12 @@ def archive_project(project_id):
         "project": project.to_dict()
     }), 200
 
-
 @business_project_bp.route("/project/<int:project_id>/unarchive", methods=["PATCH"])
-# @require_permission("project.edit")  # COMMENT THIS OUT or remove
+@login_required
 def unarchive_project(project_id):
+    if not user_has_project_access(g.user.id, project_id):
+        return jsonify({"message": "You don't have permission to access this project"}), 403
+    
     project = Project.query.get(project_id)
 
     if not project:
@@ -97,24 +160,81 @@ def unarchive_project(project_id):
         "project": project.to_dict()
     }), 200
 
-
 @business_project_bp.route("/project/<int:project_id>", methods=["DELETE"])
-# @require_permission("project.delete")  # COMMENT THIS OUT or remove
+@login_required
 def delete_project(project_id):
+    if not user_has_project_access(g.user.id, project_id):
+        return jsonify({"message": "You don't have permission to delete this project"}), 403
+    
     project = Project.query.get(project_id)
 
     if not project:
         return jsonify({"message": "Project not found"}), 404
 
-    db.session.delete(project)
-    db.session.commit()
-
-    return jsonify({"message": "Project deleted successfully"}), 200
-
+    try:
+        from app.models.project_document import ProjectDocument
+        from app.models.project_document_value import ProjectDocumentValue
+        from app.models.requirement_item import RequirementItem
+        from app.models.requirement_item_value import RequirementItemValue
+        
+        doc_ids = db.session.query(ProjectDocument.id).filter(
+            ProjectDocument.project_id == project_id
+        ).all()
+        doc_id_list = [id[0] for id in doc_ids]
+        
+        if doc_id_list:
+            req_item_ids = db.session.query(RequirementItem.id).filter(
+                RequirementItem.project_document_id.in_(doc_id_list)
+            ).all()
+            req_item_id_list = [id[0] for id in req_item_ids]
+            
+            if req_item_id_list:
+                deleted_req_item_values = RequirementItemValue.query.filter(
+                    RequirementItemValue.item_id.in_(req_item_id_list)
+                ).delete(synchronize_session=False)
+                print(f"Deleted {deleted_req_item_values} requirement item values")
+            
+            deleted_req_items = RequirementItem.query.filter(
+                RequirementItem.project_document_id.in_(doc_id_list)
+            ).delete(synchronize_session=False)
+            print(f"Deleted {deleted_req_items} requirement items")
+            
+            deleted_values = ProjectDocumentValue.query.filter(
+                ProjectDocumentValue.document_id.in_(doc_id_list)
+            ).delete(synchronize_session=False)
+            print(f"Deleted {deleted_values} document values")
+        
+        deleted_docs = ProjectDocument.query.filter_by(project_id=project_id).delete()
+        print(f"Deleted {deleted_docs} project documents")
+        
+        deleted_roles = UserRole.query.filter_by(project_id=project_id).delete()
+        print(f"Deleted {deleted_roles} user roles")
+        
+        db.session.delete(project)
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Project deleted successfully",
+            "deleted_records": {
+                "requirement_item_values": deleted_req_item_values if 'deleted_req_item_values' in locals() else 0,
+                "requirement_items": deleted_req_items if 'deleted_req_items' in locals() else 0,
+                "document_values": deleted_values if 'deleted_values' in locals() else 0,
+                "documents": deleted_docs,
+                "user_roles": deleted_roles
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error deleting project {project_id}: {str(e)}")
+        return jsonify({"message": f"Failed to delete project: {str(e)}"}), 500
 
 @business_project_bp.route("/project/<int:project_id>", methods=["GET"])
-# @require_permission("project.view")  # COMMENT THIS OUT or remove
+@login_required
 def get_project(project_id):
+    if not user_has_project_access(g.user.id, project_id):
+        return jsonify({"message": "You don't have permission to view this project"}), 403
+    
     project = Project.query.get(project_id)
 
     if not project:
@@ -122,10 +242,12 @@ def get_project(project_id):
 
     return jsonify({"project": project.to_dict()}), 200
 
-
 @business_project_bp.route("/project/<int:project_id>", methods=["PUT"])
-# @require_permission("project.edit")  # COMMENT THIS OUT or remove
+@login_required
 def update_project(project_id):
+    if not user_has_project_access(g.user.id, project_id):
+        return jsonify({"message": "You don't have permission to update this project"}), 403
+    
     project = Project.query.get(project_id)
 
     if not project:
@@ -168,3 +290,15 @@ def update_project(project_id):
         "message": "Project updated successfully",
         "project": project.to_dict()
     }), 200
+
+def user_has_project_access(user_id, project_id):
+    user_role = UserRole.query.filter_by(
+        user_id=user_id,
+        project_id=project_id
+    ).first()
+    
+    user = User.query.get(user_id)
+    if user and (user.user_type == "System Admin" or user.user_type == "Organization Admin"):
+        return True
+    
+    return user_role is not None
