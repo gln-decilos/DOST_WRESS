@@ -1,6 +1,6 @@
 "use client"
 
-import { Bell, Search, Settings, User, Menu, LogOut } from "lucide-react"
+import { Bell, Settings, Menu, LogOut } from "lucide-react"
 import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import {
@@ -135,6 +135,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
   const handleNotificationClick = async (notification: NotificationItem) => {
     try {
       const token = localStorage.getItem("token")
+      if (!token) return
 
       await fetch(`${NOTIF_API_BASE_URL}/notifications/${notification.id}/read`, {
         method: "PATCH",
@@ -157,6 +158,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
   const handleMarkAllAsRead = async () => {
     try {
       const token = localStorage.getItem("token")
+      if (!token) return
 
       await fetch(`${NOTIF_API_BASE_URL}/notifications/read-all`, {
         method: "PATCH",
@@ -206,11 +208,17 @@ export function Topbar({ onMenuClick }: TopbarProps) {
     const roleNames = user?.roles?.map((r) => r.name) || []
     const userType = user?.user_type
 
-    if (roleNames.includes("Administrator") || userType === "System Admin")
+    if (roleNames.includes("Administrator") || userType === "System Admin") {
       return "/admin/profile"
+    }
 
-    if (roleNames.includes("Business Analyst") || userType === "Organization Admin")
+    if (roleNames.includes("Business Analyst") || userType === "Organization Admin") {
       return "/business-analyst/profile"
+    }
+
+    if (roleNames.includes("Stakeholder") || userType === "Stakeholder") {
+      return "/stakeholder/profile"
+    }
 
     return "/profile"
   }, [user])
@@ -249,7 +257,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <Bell className="size-5" />
 
               {unreadCount > 0 && (
-                <span className="absolute right-1 top-1 text-[10px] bg-red-500 text-white px-1 rounded-full">
+                <span className="absolute right-1 top-1 rounded-full bg-red-500 px-1 text-[10px] text-white">
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
@@ -262,7 +270,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
                 {unreadCount > 0 && (
                   <button
                     onClick={handleMarkAllAsRead}
-                    className="text-xs text-muted-foreground"
+                    className="text-xs text-muted-foreground hover:text-foreground"
                   >
                     Mark all as read
                   </button>
@@ -272,7 +280,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               <DropdownMenuSeparator />
 
               {notifications.length === 0 ? (
-                <div className="text-center text-sm py-4">
+                <div className="py-4 text-center text-sm text-muted-foreground">
                   No notifications
                 </div>
               ) : (
@@ -280,14 +288,16 @@ export function Topbar({ onMenuClick }: TopbarProps) {
                   <DropdownMenuItem
                     key={n.id}
                     onClick={() => handleNotificationClick(n)}
-                    className="flex flex-col items-start"
+                    className="flex cursor-pointer flex-col items-start gap-1"
                   >
-                    <div className="flex w-full justify-between">
-                      <span className="font-medium text-sm">{n.title}</span>
+                    <div className="flex w-full justify-between gap-2">
+                      <span className="text-sm font-medium">{n.title}</span>
+
                       {!n.is_read && (
-                        <span className="w-2 h-2 bg-red-500 rounded-full mt-1" />
+                        <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-red-500" />
                       )}
                     </div>
+
                     <span className="text-xs text-muted-foreground">
                       {n.message}
                     </span>
@@ -317,10 +327,22 @@ export function Topbar({ onMenuClick }: TopbarProps) {
               </Avatar>
             </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuLabel>
-                {user ? user.full_name : "User"}
+                <div className="flex flex-col gap-1">
+                  <span className="font-medium">
+                    {user ? user.full_name : "User"}
+                  </span>
+
+                  {user?.email && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      Signed in as {user.email}
+                    </span>
+                  )}
+                </div>
               </DropdownMenuLabel>
+
+              <DropdownMenuSeparator />
 
               <DropdownMenuItem asChild>
                 <a href={profileHref}>Profile</a>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import RequirementsTabContent from "../requirements-tab-content"
 import {
   ChevronDown,
@@ -118,25 +118,27 @@ type TemplateSwitchPreview = {
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
 
-// Helper functions for token management
 const getAuthToken = () => {
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('token');
-    return token;
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("token")
   }
-  return null;
-};
+
+  return null
+}
 
 const createAuthHeaders = () => {
-  const token = getAuthToken();
+  const token = getAuthToken()
+
   const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    "Content-Type": "application/json",
   }
-  return headers;
-};
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  return headers
+}
 
 function getStatusClasses(status: string) {
   switch (status) {
@@ -174,26 +176,32 @@ function compareVersions(a: string, b: string) {
   const vb = parseVersion(b)
 
   if (va.major !== vb.major) return vb.major - va.major
+
   return vb.minor - va.minor
 }
 
 function getNextMinorVersion(version: string) {
   const { major, minor } = parseVersion(version)
+
   return `${major}.${minor + 1}`
 }
 
 function getNextMajorVersion(version: string) {
   const { major } = parseVersion(version)
+
   return `${major + 1}.0`
 }
 
 function parseOptions(optionsJson?: string | null): string[] {
   if (!optionsJson) return []
+
   try {
     const parsed = JSON.parse(optionsJson)
+
     if (Array.isArray(parsed)) {
       return parsed.map((item) => String(item))
     }
+
     return []
   } catch {
     return []
@@ -204,10 +212,8 @@ export default function ProjectDetailsPageView() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  // Get project ID from query parameters (e.g., ?id=123)
-  const projectIdParam = searchParams.get('id')
+  const projectIdParam = searchParams.get("id")
   const projectId = projectIdParam ? Number(projectIdParam) : null
-
   const initialTab = searchParams.get("tab")
 
   const [project, setProject] = useState<Project | null>(null)
@@ -235,23 +241,44 @@ export default function ProjectDetailsPageView() {
     status: "Pending",
   })
 
-  const [defaultVisionScopeTemplate, setDefaultVisionScopeTemplate] = useState<DocumentTemplate | null>(null)
-  const [visionScopeTemplate, setVisionScopeTemplate] = useState<DocumentTemplate | null>(null)
-  const [visionScopeTemplateLoading, setVisionScopeTemplateLoading] = useState(false)
-  const [visionScopeDocuments, setVisionScopeDocuments] = useState<ProjectDocument[]>([])
-  const [selectedVisionScopeIds, setSelectedVisionScopeIds] = useState<number[]>([])
-  const [visionScopeToDelete, setVisionScopeToDelete] = useState<ProjectDocument | null>(null)
+  const [defaultVisionScopeTemplate, setDefaultVisionScopeTemplate] =
+    useState<DocumentTemplate | null>(null)
+  const [visionScopeTemplate, setVisionScopeTemplate] =
+    useState<DocumentTemplate | null>(null)
+  const [visionScopeTemplateLoading, setVisionScopeTemplateLoading] =
+    useState(false)
+  const [visionScopeDocuments, setVisionScopeDocuments] = useState<
+    ProjectDocument[]
+  >([])
+  const [selectedVisionScopeIds, setSelectedVisionScopeIds] = useState<number[]>(
+    []
+  )
+  const [visionScopeToDelete, setVisionScopeToDelete] =
+    useState<ProjectDocument | null>(null)
   const [isVisionScopeFormOpen, setIsVisionScopeFormOpen] = useState(false)
-  const [isSaveVisionScopeVersionModalOpen, setIsSaveVisionScopeVersionModalOpen] = useState(false)
-  const [visionScopeValues, setVisionScopeValues] = useState<Record<string, string>>({})
-  const [editingVisionScope, setEditingVisionScope] = useState<ProjectDocument | null>(null)
-  const [baseVisionScopeDocument, setBaseVisionScopeDocument] = useState<ProjectDocument | null>(null)
-  const [openVisionScopeSections, setOpenVisionScopeSections] = useState<Record<number, boolean>>({})
+  const [
+    isSaveVisionScopeVersionModalOpen,
+    setIsSaveVisionScopeVersionModalOpen,
+  ] = useState(false)
+  const [visionScopeValues, setVisionScopeValues] = useState<
+    Record<string, string>
+  >({})
+  const [editingVisionScope, setEditingVisionScope] =
+    useState<ProjectDocument | null>(null)
+  const [baseVisionScopeDocument, setBaseVisionScopeDocument] =
+    useState<ProjectDocument | null>(null)
+  const [openVisionScopeSections, setOpenVisionScopeSections] = useState<
+    Record<number, boolean>
+  >({})
 
-  const [isTemplateSwitchModalOpen, setIsTemplateSwitchModalOpen] = useState(false)
-  const [templateSwitchSourceTemplate, setTemplateSwitchSourceTemplate] = useState<DocumentTemplate | null>(null)
-  const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] = useState<DocumentTemplate | null>(null)
-  const [templateSwitchPreview, setTemplateSwitchPreview] = useState<TemplateSwitchPreview | null>(null)
+  const [isTemplateSwitchModalOpen, setIsTemplateSwitchModalOpen] =
+    useState(false)
+  const [templateSwitchSourceTemplate, setTemplateSwitchSourceTemplate] =
+    useState<DocumentTemplate | null>(null)
+  const [templateSwitchTargetTemplate, setTemplateSwitchTargetTemplate] =
+    useState<DocumentTemplate | null>(null)
+  const [templateSwitchPreview, setTemplateSwitchPreview] =
+    useState<TemplateSwitchPreview | null>(null)
 
   const draftVisionScope = useMemo(
     () => visionScopeDocuments.find((doc) => doc.status === "Draft") || null,
@@ -280,7 +307,10 @@ export default function ProjectDetailsPageView() {
     document: ProjectDocument,
     fieldId: number
   ) => {
-    const value = document.values?.find((item) => item.template_field_id === fieldId)
+    const value = document.values?.find(
+      (item) => item.template_field_id === fieldId
+    )
+
     return value?.value_text || ""
   }
 
@@ -327,7 +357,8 @@ export default function ProjectDetailsPageView() {
 
     template.sections.forEach((section) => {
       section.fields.forEach((field) => {
-        values[field.key] = previewByFieldId.get(field.id) || field.default_value || ""
+        values[field.key] =
+          previewByFieldId.get(field.id) || field.default_value || ""
       })
     })
 
@@ -339,10 +370,13 @@ export default function ProjectDetailsPageView() {
     setter: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
   ) => {
     if (!template) return
+
     const initialOpenSections: Record<number, boolean> = {}
+
     template.sections.forEach((section) => {
       initialOpenSections[section.id] = true
     })
+
     setter(initialOpenSections)
   }
 
@@ -353,10 +387,11 @@ export default function ProjectDetailsPageView() {
       setFetching(true)
       setMessage("")
 
-      const token = getAuthToken();
+      const token = getAuthToken()
+
       if (!token) {
-        router.push('/signin');
-        return;
+        router.push("/signin")
+        return
       }
 
       const res = await fetch(`${API_BASE_URL}/project/${projectId}`, {
@@ -368,14 +403,16 @@ export default function ProjectDetailsPageView() {
 
       if (!res.ok) {
         if (res.status === 401) {
-          router.push('/signin');
-          return;
+          router.push("/signin")
+          return
         }
+
         if (res.status === 404) {
-          setMessage("Project not found. It may have been deleted.");
-          setProject(null);
-          return;
+          setMessage("Project not found. It may have been deleted.")
+          setProject(null)
+          return
         }
+
         setMessage(data.message || "Failed to fetch project")
         return
       }
@@ -402,10 +439,11 @@ export default function ProjectDetailsPageView() {
     try {
       setVisionScopeTemplateLoading(true)
 
-      const token = getAuthToken();
+      const token = getAuthToken()
+
       if (!token) {
-        router.push('/signin');
-        return;
+        router.push("/signin")
+        return
       }
 
       const res = await fetch(`${TEMPLATE_API_BASE_URL}/vision_scope/default`, {
@@ -417,14 +455,16 @@ export default function ProjectDetailsPageView() {
 
       if (!res.ok) {
         if (res.status === 401) {
-          router.push('/signin');
-          return;
+          router.push("/signin")
+          return
         }
+
         setMessage(data.message || "Failed to fetch Vision & Scope template")
         return
       }
 
       const fetchedTemplate: DocumentTemplate = data.template
+
       setDefaultVisionScopeTemplate(fetchedTemplate)
 
       if (!visionScopeTemplate) {
@@ -443,24 +483,29 @@ export default function ProjectDetailsPageView() {
     if (!projectId) return
 
     try {
-      const token = getAuthToken();
+      const token = getAuthToken()
+
       if (!token) {
-        router.push('/signin');
-        return;
+        router.push("/signin")
+        return
       }
 
-      const res = await fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
-        method: "GET",
-        headers: createAuthHeaders(),
-      })
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/vision-scope/documents`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(),
+        }
+      )
 
       const data = await res.json()
 
       if (!res.ok) {
         if (res.status === 401) {
-          router.push('/signin');
-          return;
+          router.push("/signin")
+          return
         }
+
         setMessage(data.message || "Failed to fetch Vision & Scope documents")
         return
       }
@@ -472,13 +517,13 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  // Check authentication on mount
   useEffect(() => {
-    const token = getAuthToken();
+    const token = getAuthToken()
+
     if (!token) {
-      router.push('/signin');
+      router.push("/signin")
     }
-  }, [router]);
+  }, [router])
 
   useEffect(() => {
     if (projectId && !isNaN(projectId) && projectId > 0) {
@@ -493,10 +538,19 @@ export default function ProjectDetailsPageView() {
     }
   }, [projectId])
 
+  useEffect(() => {
+    if (activeTab === "stakeholders" && projectId && !isNaN(projectId)) {
+      router.push(`/stakeholder/projects/stakeholders?id=${projectId}`)
+    }
+  }, [activeTab, projectId, router])
+
   const handleProjectChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
   ) => {
     const { name, value } = e.target
+
     setProjectForm((prev) => ({
       ...prev,
       [name]: value,
@@ -516,10 +570,11 @@ export default function ProjectDetailsPageView() {
     setMessage("")
 
     try {
-      const token = getAuthToken();
+      const token = getAuthToken()
+
       if (!token) {
-        router.push('/signin');
-        return;
+        router.push("/signin")
+        return
       }
 
       const res = await fetch(`${API_BASE_URL}/project/${projectId}`, {
@@ -538,15 +593,17 @@ export default function ProjectDetailsPageView() {
 
       if (!res.ok) {
         if (res.status === 401) {
-          router.push('/signin');
-          return;
+          router.push("/signin")
+          return
         }
+
         setMessage(data.message || "Failed to update project")
         return
       }
 
       setMessage(data.message || "Project updated successfully")
       setIsEditMode(false)
+
       await fetchProject()
     } catch (error) {
       console.error("Failed to update project:", error)
@@ -604,6 +661,7 @@ export default function ProjectDetailsPageView() {
         console.error("Failed to load draft document:", error)
         setMessage("Failed to load draft document")
       }
+
       return
     }
 
@@ -614,6 +672,7 @@ export default function ProjectDetailsPageView() {
         null,
         null
       )
+
       return
     }
 
@@ -721,7 +780,13 @@ export default function ProjectDetailsPageView() {
   }
 
   const handleSwitchToLatestTemplate = () => {
-    if (!templateSwitchTargetTemplate || !templateSwitchPreview || !baseVisionScopeDocument) return
+    if (
+      !templateSwitchTargetTemplate ||
+      !templateSwitchPreview ||
+      !baseVisionScopeDocument
+    ) {
+      return
+    }
 
     const transferredValues = buildValuesFromSwitchPreview(
       templateSwitchTargetTemplate,
@@ -795,17 +860,20 @@ export default function ProjectDetailsPageView() {
 
         setMessage(data.message || "Draft updated successfully")
       } else {
-        const res = await fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
-          method: "POST",
-          headers: createAuthHeaders(),
-          body: JSON.stringify({
-            template_id: visionScopeTemplate.id,
-            version: "Draft",
-            status: "Draft",
-            based_on_document_id: baseVisionScopeDocument?.id || null,
-            values: valuesPayload,
-          }),
-        })
+        const res = await fetch(
+          `${API_BASE_URL}/project/${projectId}/vision-scope/documents`,
+          {
+            method: "POST",
+            headers: createAuthHeaders(),
+            body: JSON.stringify({
+              template_id: visionScopeTemplate.id,
+              version: "Draft",
+              status: "Draft",
+              based_on_document_id: baseVisionScopeDocument?.id || null,
+              values: valuesPayload,
+            }),
+          }
+        )
 
         const data = await res.json()
 
@@ -818,6 +886,7 @@ export default function ProjectDetailsPageView() {
       }
 
       closeCreateVisionScopeForm()
+
       await fetchVisionScopeDocuments()
     } catch (error) {
       console.error("Failed to save draft:", error)
@@ -840,7 +909,8 @@ export default function ProjectDetailsPageView() {
       const baseVersion = latestVisionScope?.version || "1.0"
 
       const templateChanged =
-        !!baseVisionScopeDocument && baseVisionScopeDocument.template_id !== visionScopeTemplate.id
+        !!baseVisionScopeDocument &&
+        baseVisionScopeDocument.template_id !== visionScopeTemplate.id
 
       let computedVersion = "1.0"
 
@@ -881,17 +951,21 @@ export default function ProjectDetailsPageView() {
 
         setMessage(data.message || `Vision & Scope published as version ${computedVersion}`)
       } else {
-        const res = await fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
-          method: "POST",
-          headers: createAuthHeaders(),
-          body: JSON.stringify({
-            template_id: visionScopeTemplate.id,
-            version: computedVersion,
-            status: "Published",
-            based_on_document_id: baseVisionScopeDocument?.id || latestVisionScope?.id || null,
-            values: valuesPayload,
-          }),
-        })
+        const res = await fetch(
+          `${API_BASE_URL}/project/${projectId}/vision-scope/documents`,
+          {
+            method: "POST",
+            headers: createAuthHeaders(),
+            body: JSON.stringify({
+              template_id: visionScopeTemplate.id,
+              version: computedVersion,
+              status: "Published",
+              based_on_document_id:
+                baseVisionScopeDocument?.id || latestVisionScope?.id || null,
+              values: valuesPayload,
+            }),
+          }
+        )
 
         const data = await res.json()
 
@@ -902,14 +976,15 @@ export default function ProjectDetailsPageView() {
 
         setMessage(
           data.message ||
-          (!latestVisionScope
-            ? "Initial Vision & Scope version created successfully"
-            : `Vision & Scope saved as version ${computedVersion}`)
+            (!latestVisionScope
+              ? "Initial Vision & Scope version created successfully"
+              : `Vision & Scope saved as version ${computedVersion}`)
         )
       }
 
       setIsSaveVisionScopeVersionModalOpen(false)
       closeCreateVisionScopeForm()
+
       await fetchVisionScopeDocuments()
     } catch (error) {
       console.error("Failed to save vision & scope version:", error)
@@ -980,6 +1055,7 @@ export default function ProjectDetailsPageView() {
       setVisionScopeToDelete(null)
       setSelectedVisionScopeIds((prev) => prev.filter((id) => id !== deletedId))
       setMessage(data.message || "Vision & Scope version deleted successfully")
+
       await fetchVisionScopeDocuments()
     } catch (error) {
       console.error("Failed to delete vision & scope:", error)
@@ -1019,6 +1095,7 @@ export default function ProjectDetailsPageView() {
 
       case "select": {
         const options = parseOptions(field.options_json)
+
         return (
           <select
             value={value}
@@ -1065,7 +1142,9 @@ export default function ProjectDetailsPageView() {
             <input
               type="checkbox"
               checked={value === "true"}
-              onChange={(e) => onChangeValue(field.key, e.target.checked ? "true" : "false")}
+              onChange={(e) =>
+                onChangeValue(field.key, e.target.checked ? "true" : "false")
+              }
             />
             {field.placeholder || field.label}
           </label>
@@ -1086,15 +1165,19 @@ export default function ProjectDetailsPageView() {
   }
 
   const SectionToggleIcon = ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
+    isOpen ? (
+      <ChevronDown className="h-4 w-4" />
+    ) : (
+      <ChevronRight className="h-4 w-4" />
+    )
 
   const tabButtonClasses = (tab: string) =>
-    `rounded-lg px-4 py-2 text-sm font-medium ${activeTab === tab
-      ? "bg-primary text-primary-foreground"
-      : "border border-border text-foreground hover:bg-muted"
+    `rounded-lg px-4 py-2 text-sm font-medium ${
+      activeTab === tab
+        ? "bg-primary text-primary-foreground"
+        : "border border-border text-foreground hover:bg-muted"
     }`
 
-  // Validate project ID
   if (!projectIdParam || isNaN(Number(projectIdParam))) {
     return (
       <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
@@ -1106,17 +1189,33 @@ export default function ProjectDetailsPageView() {
             Back to Projects
           </button>
         </div>
+
         <div className="rounded-2xl bg-background p-8 text-center ring-1 ring-border">
           <div className="flex flex-col items-center gap-4">
             <div className="text-red-600">
-              <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              <svg
+                className="mx-auto mb-4 h-16 w-16"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
               </svg>
             </div>
-            <h2 className="text-xl font-semibold text-foreground">Invalid Project ID</h2>
+
+            <h2 className="text-xl font-semibold text-foreground">
+              Invalid Project ID
+            </h2>
+
             <p className="text-muted-foreground">
               The project ID is missing or invalid. Please go back and try again.
             </p>
+
             <button
               onClick={() => router.push("/stakeholder/projects/projects-page")}
               className="mt-4 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
@@ -1129,7 +1228,6 @@ export default function ProjectDetailsPageView() {
     )
   }
 
-  // Show loading state
   if (fetching) {
     return (
       <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
@@ -1141,9 +1239,10 @@ export default function ProjectDetailsPageView() {
             Back to Projects
           </button>
         </div>
+
         <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
           <div className="flex flex-col items-center gap-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
             <p>Loading project details...</p>
           </div>
         </div>
@@ -1151,7 +1250,6 @@ export default function ProjectDetailsPageView() {
     )
   }
 
-  // Show error state if no project
   if (!project) {
     return (
       <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
@@ -1163,8 +1261,10 @@ export default function ProjectDetailsPageView() {
             Back to Projects
           </button>
         </div>
+
         <div className="rounded-2xl bg-background p-8 text-center ring-1 ring-border">
           <p className="text-red-600">{message || "Project not found."}</p>
+
           <button
             onClick={() => router.push("/stakeholder/projects/projects-page")}
             className="mt-4 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
@@ -1190,6 +1290,7 @@ export default function ProjectDetailsPageView() {
           <h1 className="text-2xl font-semibold text-foreground">
             {project?.name || "Project Details"}
           </h1>
+
           <p className="mt-2 text-muted-foreground">
             View project overview, stakeholders, vision and scope, and requirements.
           </p>
@@ -1203,12 +1304,17 @@ export default function ProjectDetailsPageView() {
       )}
 
       <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-border pb-4">
-        <button onClick={() => setActiveTab("overview")} className={tabButtonClasses("overview")}>
+        <button
+          onClick={() => setActiveTab("overview")}
+          className={tabButtonClasses("overview")}
+        >
           Overview
         </button>
 
         <button
-          onClick={() => setActiveTab("stakeholders")}
+          onClick={() =>
+            router.push(`/stakeholder/projects/stakeholders?id=${projectId}`)
+          }
           className={tabButtonClasses("stakeholders")}
         >
           Stakeholders
@@ -1255,6 +1361,7 @@ export default function ProjectDetailsPageView() {
                 <label className="mb-1 block text-sm font-medium text-foreground">
                   Project Title
                 </label>
+
                 <input
                   type="text"
                   name="name"
@@ -1269,6 +1376,7 @@ export default function ProjectDetailsPageView() {
                 <label className="mb-1 block text-sm font-medium text-foreground">
                   Description
                 </label>
+
                 <textarea
                   name="description"
                   value={projectForm.description}
@@ -1279,7 +1387,10 @@ export default function ProjectDetailsPageView() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Status
+                </label>
+
                 <select
                   name="status"
                   value={projectForm.status}
@@ -1298,6 +1409,7 @@ export default function ProjectDetailsPageView() {
                   <label className="mb-1 block text-sm font-medium text-foreground">
                     Start Date
                   </label>
+
                   <input
                     type="date"
                     name="start_date"
@@ -1311,6 +1423,7 @@ export default function ProjectDetailsPageView() {
                   <label className="mb-1 block text-sm font-medium text-foreground">
                     End Date
                   </label>
+
                   <input
                     type="date"
                     name="end_date"
@@ -1351,22 +1464,33 @@ export default function ProjectDetailsPageView() {
           ) : (
             <div className="space-y-6">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Project Title</p>
-                <p className="mt-1 text-lg font-semibold text-foreground">{project.name}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Project Title
+                </p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {project.name}
+                </p>
               </div>
 
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Description</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Description
+                </p>
                 <p className="mt-1 text-foreground">
                   {project.description || "No description provided."}
                 </p>
               </div>
 
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Status</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Status
+                </p>
+
                 <div className="mt-2">
                   <span
-                    className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ring-1 ${getStatusClasses(project.status)}`}
+                    className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ring-1 ${getStatusClasses(
+                      project.status
+                    )}`}
                   >
                     {project.status}
                   </span>
@@ -1375,28 +1499,37 @@ export default function ProjectDetailsPageView() {
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Start Date</p>
-                  <p className="mt-1 text-foreground">{project.start_date || "-"}</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Start Date
+                  </p>
+                  <p className="mt-1 text-foreground">
+                    {project.start_date || "-"}
+                  </p>
                 </div>
 
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">End Date</p>
-                  <p className="mt-1 text-foreground">{project.end_date || "-"}</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    End Date
+                  </p>
+                  <p className="mt-1 text-foreground">
+                    {project.end_date || "-"}
+                  </p>
                 </div>
               </div>
             </div>
           )}
         </div>
       ) : activeTab === "stakeholders" ? (
-        <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
-          <h2 className="text-xl font-semibold text-foreground">Stakeholders</h2>
-          <p className="mt-2 text-muted-foreground">Add stakeholder list here later.</p>
+        <div className="rounded-2xl bg-background p-6 text-center text-muted-foreground ring-1 ring-border">
+          Redirecting to stakeholder management...
         </div>
       ) : activeTab === "vision-scope" ? (
         <div className="space-y-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-semibold text-foreground">Vision & Scope</h2>
+              <h2 className="text-xl font-semibold text-foreground">
+                Vision & Scope
+              </h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Define the business direction before building requirements.
               </p>
@@ -1430,11 +1563,16 @@ export default function ProjectDetailsPageView() {
                         ? "Create New Draft"
                         : "Create Vision & Scope"}
                   </h3>
+
                   <p className="mt-1 text-sm text-muted-foreground">
                     Drafts stay editable until you publish them as a version.
                   </p>
+
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Using template: <span className="font-medium text-foreground">{visionScopeTemplate.name}</span>
+                    Using template:{" "}
+                    <span className="font-medium text-foreground">
+                      {visionScopeTemplate.name}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -1445,6 +1583,7 @@ export default function ProjectDetailsPageView() {
                     <label className="mb-1 block text-sm font-medium text-foreground">
                       Current State
                     </label>
+
                     <input
                       type="text"
                       value={
@@ -1463,6 +1602,7 @@ export default function ProjectDetailsPageView() {
                     <label className="mb-1 block text-sm font-medium text-foreground">
                       Template
                     </label>
+
                     <input
                       type="text"
                       value={visionScopeTemplate.name}
@@ -1480,12 +1620,20 @@ export default function ProjectDetailsPageView() {
                       className="flex w-full items-center justify-between px-4 py-3 text-left"
                     >
                       <div>
-                        <p className="font-medium text-foreground">{section.title}</p>
+                        <p className="font-medium text-foreground">
+                          {section.title}
+                        </p>
+
                         {section.description && (
-                          <p className="text-sm text-muted-foreground">{section.description}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {section.description}
+                          </p>
                         )}
                       </div>
-                      <SectionToggleIcon isOpen={openVisionScopeSections[section.id]} />
+
+                      <SectionToggleIcon
+                        isOpen={openVisionScopeSections[section.id]}
+                      />
                     </button>
 
                     {openVisionScopeSections[section.id] && (
@@ -1494,7 +1642,9 @@ export default function ProjectDetailsPageView() {
                           <div key={field.id}>
                             <label className="mb-1 block text-sm font-medium text-foreground">
                               {field.label}
-                              {field.is_required && <span className="ml-1 text-red-500">*</span>}
+                              {field.is_required && (
+                                <span className="ml-1 text-red-500">*</span>
+                              )}
                             </label>
 
                             {renderDynamicField(
@@ -1551,9 +1701,12 @@ export default function ProjectDetailsPageView() {
                 <div className="rounded-2xl bg-amber-50 p-6 ring-1 ring-amber-200">
                   <div className="mb-4 flex items-start justify-between gap-4">
                     <div>
-                      <h3 className="text-lg font-semibold text-amber-900">Draft in Progress</h3>
+                      <h3 className="text-lg font-semibold text-amber-900">
+                        Draft in Progress
+                      </h3>
                       <p className="mt-1 text-sm text-amber-800">
-                        This draft is still editable and has not been published as a version.
+                        This draft is still editable and has not been published as a
+                        version.
                       </p>
                     </div>
 
@@ -1585,7 +1738,9 @@ export default function ProjectDetailsPageView() {
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="rounded-xl border border-amber-200 bg-white p-4">
                       <p className="text-sm font-medium text-amber-700">Status</p>
-                      <p className="mt-1 text-lg font-semibold text-amber-900">Draft</p>
+                      <p className="mt-1 text-lg font-semibold text-amber-900">
+                        Draft
+                      </p>
                     </div>
 
                     <div className="rounded-xl border border-amber-200 bg-white p-4">
@@ -1596,7 +1751,9 @@ export default function ProjectDetailsPageView() {
                     </div>
 
                     <div className="rounded-xl border border-amber-200 bg-white p-4">
-                      <p className="text-sm font-medium text-amber-700">Last Updated</p>
+                      <p className="text-sm font-medium text-amber-700">
+                        Last Updated
+                      </p>
                       <p className="mt-1 text-amber-900">
                         {new Date(draftVisionScope.updated_at).toLocaleDateString()}
                       </p>
@@ -1625,7 +1782,9 @@ export default function ProjectDetailsPageView() {
                       <button
                         type="button"
                         onClick={() =>
-                          router.push(`/project/${projectId}/vision-scope/${latestVisionScope.id}`)
+                          router.push(
+                            `/project/${projectId}/vision-scope/${latestVisionScope.id}`
+                          )
                         }
                         className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
                         title="View Latest Version"
@@ -1657,21 +1816,27 @@ export default function ProjectDetailsPageView() {
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="rounded-xl border border-border bg-card p-4">
-                      <p className="text-sm font-medium text-muted-foreground">Version</p>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Version
+                      </p>
                       <p className="mt-1 text-lg font-semibold text-foreground">
                         {latestVisionScope.version}
                       </p>
                     </div>
 
                     <div className="rounded-xl border border-border bg-card p-4">
-                      <p className="text-sm font-medium text-muted-foreground">Created</p>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Created
+                      </p>
                       <p className="mt-1 text-foreground">
                         {new Date(latestVisionScope.created_at).toLocaleDateString()}
                       </p>
                     </div>
 
                     <div className="rounded-xl border border-border bg-card p-4">
-                      <p className="text-sm font-medium text-muted-foreground">Last Updated</p>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Last Updated
+                      </p>
                       <p className="mt-1 text-foreground">
                         {new Date(latestVisionScope.updated_at).toLocaleDateString()}
                       </p>
@@ -1691,7 +1856,8 @@ export default function ProjectDetailsPageView() {
                   </h3>
 
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Start defining your project vision and scope to guide requirement development.
+                    Start defining your project vision and scope to guide requirement
+                    development.
                   </p>
                 </div>
               ) : null}
@@ -1699,7 +1865,9 @@ export default function ProjectDetailsPageView() {
               {previousVisionScopes.length > 0 && (
                 <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
                   <div className="border-b border-border px-6 py-4">
-                    <h3 className="text-lg font-semibold text-foreground">Previous Versions</h3>
+                    <h3 className="text-lg font-semibold text-foreground">
+                      Previous Versions
+                    </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
                       View earlier published versions of the Vision & Scope document.
                     </p>
@@ -1714,7 +1882,8 @@ export default function ProjectDetailsPageView() {
                               type="checkbox"
                               checked={
                                 previousVisionScopes.length > 0 &&
-                                selectedVisionScopeIds.length === previousVisionScopes.length
+                                selectedVisionScopeIds.length ===
+                                  previousVisionScopes.length
                               }
                               onChange={toggleSelectAllVisionScopes}
                             />
@@ -1732,13 +1901,20 @@ export default function ProjectDetailsPageView() {
                             key={document.id}
                             className="cursor-pointer border-t border-border hover:bg-muted/30"
                             onClick={() =>
-                              router.push(`/project/${projectId}/vision-scope/${document.id}`)
+                              router.push(
+                                `/project/${projectId}/vision-scope/${document.id}`
+                              )
                             }
                           >
-                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <td
+                              className="px-4 py-3"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <input
                                 type="checkbox"
-                                checked={selectedVisionScopeIds.includes(document.id)}
+                                checked={selectedVisionScopeIds.includes(
+                                  document.id
+                                )}
                                 onChange={() => toggleVisionScopeSelection(document.id)}
                               />
                             </td>
@@ -1755,12 +1931,17 @@ export default function ProjectDetailsPageView() {
                               {new Date(document.updated_at).toLocaleDateString()}
                             </td>
 
-                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <td
+                              className="px-4 py-3"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <div className="flex items-center gap-2">
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    router.push(`/project/${projectId}/vision-scope/${document.id}`)
+                                    router.push(
+                                      `/project/${projectId}/vision-scope/${document.id}`
+                                    )
                                   }
                                   className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
                                   title="View Version"
@@ -1792,141 +1973,148 @@ export default function ProjectDetailsPageView() {
         projectId ? <RequirementsTabContent projectId={projectId} /> : null
       ) : null}
 
-      {isTemplateSwitchModalOpen && templateSwitchSourceTemplate && templateSwitchTargetTemplate && templateSwitchPreview && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">
-              A newer template is available
-            </h3>
+      {isTemplateSwitchModalOpen &&
+        templateSwitchSourceTemplate &&
+        templateSwitchTargetTemplate &&
+        templateSwitchPreview && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+              <h3 className="text-lg font-semibold text-foreground">
+                A newer template is available
+              </h3>
 
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              This document is currently using{" "}
-              <span className="font-medium text-foreground">
-                {templateSwitchSourceTemplate.name}
-              </span>
-              . A newer template,{" "}
-              <span className="font-medium text-foreground">
-                {templateSwitchTargetTemplate.name}
-              </span>
-              , is now available.
-            </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                This document is currently using{" "}
+                <span className="font-medium text-foreground">
+                  {templateSwitchSourceTemplate.name}
+                </span>
+                . A newer template,{" "}
+                <span className="font-medium text-foreground">
+                  {templateSwitchTargetTemplate.name}
+                </span>
+                , is now available.
+              </p>
 
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              You can continue using your current template, or switch to the newer one.
-              If you switch, matching information will be carried over automatically.
-            </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                You can continue using your current template, or switch to the newer
+                one. If you switch, matching information will be carried over
+                automatically.
+              </p>
 
-            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-border bg-background p-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  Information carried over
-                </p>
-                <p className="mt-1 text-lg font-semibold text-foreground">
-                  {templateSwitchPreview.transferred_count}
-                </p>
-              </div>
+              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Information carried over
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">
+                    {templateSwitchPreview.transferred_count}
+                  </p>
+                </div>
 
-              <div className="rounded-xl border border-border bg-background p-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  Information that won&apos;t be included
-                </p>
-                <p className="mt-1 text-lg font-semibold text-foreground">
-                  {templateSwitchPreview.unmatched_old_fields.length}
-                </p>
-              </div>
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Information that won&apos;t be included
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">
+                    {templateSwitchPreview.unmatched_old_fields.length}
+                  </p>
+                </div>
 
-              <div className="rounded-xl border border-border bg-background p-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  New information to fill in
-                </p>
-                <p className="mt-1 text-lg font-semibold text-foreground">
-                  {templateSwitchPreview.new_empty_fields.length}
-                </p>
-              </div>
-            </div>
-
-            {templateSwitchPreview.unmatched_old_fields.length > 0 && (
-              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm font-medium text-amber-900">
-                  Some information from your current template is not part of the newer template
-                </p>
-                <p className="mt-1 text-xs text-amber-800">
-                  This information will not be carried over if you switch.
-                </p>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {templateSwitchPreview.unmatched_old_fields.map((fieldKey) => (
-                    <span
-                      key={fieldKey}
-                      className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
-                    >
-                      {fieldKey}
-                    </span>
-                  ))}
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    New information to fill in
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">
+                    {templateSwitchPreview.new_empty_fields.length}
+                  </p>
                 </div>
               </div>
-            )}
 
-            {templateSwitchPreview.new_empty_fields.length > 0 && (
-              <div className="mt-4 rounded-xl border border-border bg-background p-4">
-                <p className="text-sm font-medium text-foreground">
-                  New information you may need to complete
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  You can review and fill these in after switching templates.
-                </p>
+              {templateSwitchPreview.unmatched_old_fields.length > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-medium text-amber-900">
+                    Some information from your current template is not part of the
+                    newer template
+                  </p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    This information will not be carried over if you switch.
+                  </p>
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {templateSwitchPreview.new_empty_fields.map((field) => (
-                    <span
-                      key={field.field_key}
-                      className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground"
-                    >
-                      {field.field_label}
-                    </span>
-                  ))}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {templateSwitchPreview.unmatched_old_fields.map((fieldKey) => (
+                      <span
+                        key={fieldKey}
+                        className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
+                      >
+                        {fieldKey}
+                      </span>
+                    ))}
+                  </div>
                 </div>
+              )}
+
+              {templateSwitchPreview.new_empty_fields.length > 0 && (
+                <div className="mt-4 rounded-xl border border-border bg-background p-4">
+                  <p className="text-sm font-medium text-foreground">
+                    New information you may need to complete
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    You can review and fill these in after switching templates.
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {templateSwitchPreview.new_empty_fields.map((field) => (
+                      <span
+                        key={field.field_key}
+                        className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground"
+                      >
+                        {field.field_label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsTemplateSwitchModalOpen(false)
+                    setTemplateSwitchSourceTemplate(null)
+                    setTemplateSwitchTargetTemplate(null)
+                    setTemplateSwitchPreview(null)
+                  }}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleKeepCurrentTemplate}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+                >
+                  Keep current template
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSwitchToLatestTemplate}
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+                >
+                  Use newer template
+                </button>
               </div>
-            )}
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsTemplateSwitchModalOpen(false)
-                  setTemplateSwitchSourceTemplate(null)
-                  setTemplateSwitchTargetTemplate(null)
-                  setTemplateSwitchPreview(null)
-                }}
-                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={handleKeepCurrentTemplate}
-                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
-              >
-                Keep current template
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSwitchToLatestTemplate}
-                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-              >
-                Use newer template
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       {isSaveVisionScopeVersionModalOpen && (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">Save as Published Version</h3>
+            <h3 className="text-lg font-semibold text-foreground">
+              Save as Published Version
+            </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
               Choose how the system should version this Vision & Scope document.
@@ -1975,13 +2163,16 @@ export default function ProjectDetailsPageView() {
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
-              Delete Vision & Scope {visionScopeToDelete.status === "Draft" ? "Draft" : "Version"}
+              Delete Vision & Scope{" "}
+              {visionScopeToDelete.status === "Draft" ? "Draft" : "Version"}
             </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
               Are you sure you want to delete{" "}
               <span className="font-semibold text-foreground">
-                {visionScopeToDelete.status === "Draft" ? "this draft" : visionScopeToDelete.version}
+                {visionScopeToDelete.status === "Draft"
+                  ? "this draft"
+                  : visionScopeToDelete.version}
               </span>
               ? This action cannot be undone.
             </p>
