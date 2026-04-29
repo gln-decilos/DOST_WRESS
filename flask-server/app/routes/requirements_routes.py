@@ -6,6 +6,8 @@ from app.models.document_template_field import DocumentTemplateField
 from app.models.project_document import ProjectDocument
 from app.models.requirement_item import RequirementItem
 from app.models.requirement_item_value import RequirementItemValue
+from app.models.project_stakeholder import ProjectStakeholder
+from app.models.notification import Notification
 from app.utils.permissions import require_permission
 
 requirements_bp = Blueprint("requirements", __name__)
@@ -33,6 +35,70 @@ def get_template_field_maps(template):
             field_by_key[field.key] = field
 
     return field_by_id, field_by_key
+
+
+def create_notification(
+    user_id,
+    project_id,
+    document_id,
+    title,
+    message,
+    notification_type,
+    link=None,
+):
+    if not user_id:
+        return
+
+    db.session.add(Notification(
+        user_id=user_id,
+        project_id=project_id,
+        document_id=document_id,
+        title=title,
+        message=message,
+        type=notification_type,
+        link=link,
+    ))
+
+
+def create_project_stakeholder_notifications(
+    project_id,
+    document_id,
+    title,
+    message,
+    notification_type,
+    link=None,
+    exclude_user_ids=None,
+):
+    exclude_user_ids = set(exclude_user_ids or [])
+
+    stakeholders = ProjectStakeholder.query.filter_by(
+        project_id=project_id,
+        status="Active"
+    ).all()
+
+    notified_user_ids = set()
+
+    for stakeholder in stakeholders:
+        if not stakeholder.user_id:
+            continue
+
+        if stakeholder.user_id in exclude_user_ids:
+            continue
+
+        if stakeholder.user_id in notified_user_ids:
+            continue
+
+        create_notification(
+            user_id=stakeholder.user_id,
+            project_id=project_id,
+            document_id=document_id,
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            link=link,
+        )
+
+        notified_user_ids.add(stakeholder.user_id)
 
 
 def pick_first_value(values: dict, keys: list[str], default_value: str = ""):
@@ -331,6 +397,7 @@ def create_requirement_document(project_id):
         status=status,
         created_by=session.get("user_id"),
     )
+
     db.session.add(document)
     db.session.commit()
 
@@ -405,7 +472,12 @@ def update_requirement_document(project_id, document_id):
         document.version = str(version).strip()
 
     if status:
-        document.status = str(status).strip()
+        status = str(status).strip()
+
+        if status not in DOCUMENT_STATUSES:
+            return jsonify({"message": "Invalid document status"}), 400
+
+        document.status = status
 
     db.session.commit()
 
@@ -423,13 +495,22 @@ def delete_requirement_document(project_id, document_id):
     if not document:
         return jsonify({"message": "Requirement document not found"}), 404
 
+    Notification.query.filter_by(
+        document_id=document.id
+    ).delete(synchronize_session=False)
+
     RequirementItemValue.query.filter(
         RequirementItemValue.item_id.in_(
-            db.session.query(RequirementItem.id).filter_by(project_document_id=document.id)
+            db.session.query(RequirementItem.id).filter_by(
+                project_document_id=document.id
+            )
         )
     ).delete(synchronize_session=False)
 
-    RequirementItem.query.filter_by(project_document_id=document.id).delete()
+    RequirementItem.query.filter_by(
+        project_document_id=document.id
+    ).delete(synchronize_session=False)
+
     db.session.delete(document)
     db.session.commit()
 
@@ -447,6 +528,19 @@ def submit_requirement_document_for_approval(project_id, document_id):
         return jsonify({"message": "Only draft documents can be submitted for approval"}), 400
 
     document.status = "For Approval"
+
+    link = f"/project/{project_id}?tab=requirements&documentId={document_id}"
+
+    create_project_stakeholder_notifications(
+        project_id=project_id,
+        document_id=document_id,
+        title="Requirements Approval Needed",
+        message=f"Requirements Document v{document.version} is waiting for your approval.",
+        notification_type="requirements_approval_request",
+        link=link,
+        exclude_user_ids=[session.get("user_id")],
+    )
+
     db.session.commit()
 
     return jsonify({
@@ -466,6 +560,19 @@ def approve_requirement_document(project_id, document_id):
         return jsonify({"message": "Only documents for approval can be approved"}), 400
 
     document.status = "Approved"
+
+    link = f"/project/{project_id}?tab=requirements&documentId={document_id}"
+
+    create_notification(
+        user_id=document.created_by,
+        project_id=project_id,
+        document_id=document_id,
+        title="Requirements Document Approved",
+        message=f"Requirements Document v{document.version} has been approved.",
+        notification_type="requirements_approved",
+        link=link,
+    )
+
     db.session.commit()
 
     return jsonify({
@@ -485,6 +592,28 @@ def freeze_requirement_document(project_id, document_id):
         return jsonify({"message": "Only approved documents can be frozen"}), 400
 
     document.status = "Frozen"
+
+    link = f"/project/{project_id}?tab=requirements&documentId={document_id}"
+
+    create_project_stakeholder_notifications(
+        project_id=project_id,
+        document_id=document_id,
+        title="Requirements Document Frozen",
+        message=f"Requirements Document v{document.version} has been frozen and is now the baseline.",
+        notification_type="requirements_frozen",
+        link=link,
+    )
+
+    create_notification(
+        user_id=document.created_by,
+        project_id=project_id,
+        document_id=document_id,
+        title="Requirements Document Frozen",
+        message=f"Requirements Document v{document.version} has been frozen and is now the baseline.",
+        notification_type="requirements_frozen",
+        link=link,
+    )
+
     db.session.commit()
 
     return jsonify({
@@ -536,10 +665,9 @@ def create_requirement_document_version(project_id, document_id):
         status="Draft",
         created_by=session.get("user_id"),
     )
+
     db.session.add(new_document)
     db.session.flush()
-
-    document_template = DocumentTemplate.query.get(source_document.template_id)
 
     for item in source_document.requirement_items:
         new_item = RequirementItem(
@@ -547,6 +675,7 @@ def create_requirement_document_version(project_id, document_id):
             sort_order=item.sort_order,
             created_by=session.get("user_id"),
         )
+
         db.session.add(new_item)
         db.session.flush()
 
@@ -556,6 +685,18 @@ def create_requirement_document_version(project_id, document_id):
                 template_field_id=value.template_field_id,
                 value_text=value.value_text,
             ))
+
+    link = f"/project/{project_id}?tab=requirements&documentId={new_document.id}"
+
+    create_project_stakeholder_notifications(
+        project_id=project_id,
+        document_id=new_document.id,
+        title="New Requirements Version Created",
+        message=f"Requirements Document v{new_document.version} has been created from v{source_document.version}.",
+        notification_type="requirements_new_version",
+        link=link,
+        exclude_user_ids=[session.get("user_id")],
+    )
 
     db.session.commit()
 
@@ -646,6 +787,7 @@ def create_requirement_item(project_id, document_id):
         .order_by(RequirementItem.sort_order.desc())
         .first()
     )
+
     sort_order = (last_item.sort_order + 1) if last_item else 1
 
     item = RequirementItem(
@@ -653,6 +795,7 @@ def create_requirement_item(project_id, document_id):
         sort_order=sort_order,
         created_by=session.get("user_id"),
     )
+
     db.session.add(item)
     db.session.flush()
 

@@ -14,6 +14,7 @@ class UserRole(db.Model):
     project = db.relationship("Project", backref="user_roles") 
     user = db.relationship("User", back_populates="user_roles")
     role = db.relationship("Role", back_populates="user_roles")
+    project = db.relationship("Project")
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "role_id", "project_id", name="uq_user_role_project"),

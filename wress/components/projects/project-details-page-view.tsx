@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import RequirementsTabContent from "@/components/projects/requirements-tab-content"
+import ProjectStakeholdersTabContent from "@/components/projects/project-stakeholders-tab-content"
 import {
   ChevronDown,
   ChevronRight,
@@ -1285,10 +1286,7 @@ export default function ProjectDetailsPageView() {
           )}
         </div>
       ) : activeTab === "stakeholders" ? (
-        <div className="rounded-2xl bg-background p-6 ring-1 ring-border">
-          <h2 className="text-xl font-semibold text-foreground">Stakeholders</h2>
-          <p className="mt-2 text-muted-foreground">Add stakeholder list here later.</p>
-        </div>
+        <ProjectStakeholdersTabContent projectId={projectId} />
       ) : activeTab === "vision-scope" ? (
         !canViewVisionScope ? (
           <div className="rounded-2xl bg-background p-6 ring-1 ring-border">

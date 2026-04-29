@@ -101,6 +101,20 @@ function compareVersions(a: string, b: string) {
   return vb.minor - va.minor
 }
 
+async function readJsonResponse(res: Response) {
+  const text = await res.text()
+
+  if (!text) {
+    return null
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`Expected JSON but received: ${text.slice(0, 80)}`)
+  }
+}
+
 export default function VisionScopeDetailsPageView({
   projectId,
   documentId,
@@ -131,35 +145,35 @@ export default function VisionScopeDetailsPageView({
       setMessage("")
 
       const [documentRes, docsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/project/${projectId}/documents/${documentId}`, {
+        fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents/${documentId}`, {
           method: "GET",
           credentials: "include",
         }),
-        fetch(`${API_BASE_URL}/project/${projectId}/documents`, {
+        fetch(`${API_BASE_URL}/project/${projectId}/vision-scope/documents`, {
           method: "GET",
           credentials: "include",
         }),
       ])
 
-      const documentData: DocumentContextResponse = await documentRes.json()
-      const docsData = await docsRes.json()
+      const documentData = (await readJsonResponse(documentRes)) as DocumentContextResponse | null
+      const docsData = await readJsonResponse(docsRes)
 
       if (!documentRes.ok) {
-        setMessage((documentData as any).message || "Failed to fetch document")
+        setMessage((documentData as any)?.message || "Failed to fetch document")
         return
       }
 
       if (!docsRes.ok) {
-        setMessage(docsData.message || "Failed to fetch documents")
+        setMessage(docsData?.message || "Failed to fetch documents")
         return
       }
 
-      if (!documentData.template) {
+      if (!documentData?.template) {
         setMessage("Template not found for this document")
         return
       }
 
-      const sortedDocuments = [...(docsData.documents || [])]
+      const sortedDocuments = [...(docsData?.documents || [])]
         .filter((item: VisionScopeDocument) => item.status !== "Draft")
         .sort((a, b) => compareVersions(a.version, b.version))
 
@@ -254,12 +268,15 @@ export default function VisionScopeDetailsPageView({
             <h1 className="text-2xl font-semibold text-foreground">
               Vision & Scope {document.version}
             </h1>
+
             <p className="mt-2 text-muted-foreground">
               Created {new Date(document.created_at).toLocaleDateString()} · Updated{" "}
               {new Date(document.updated_at).toLocaleDateString()}
             </p>
+
             <p className="mt-2 text-xs text-muted-foreground">
-              Template used: <span className="font-medium text-foreground">{template.name}</span>
+              Template used:{" "}
+              <span className="font-medium text-foreground">{template.name}</span>
             </p>
           </div>
 
@@ -340,6 +357,7 @@ export default function VisionScopeDetailsPageView({
                     <p className="text-sm text-muted-foreground">{section.description}</p>
                   )}
                 </div>
+
                 <SectionToggleIcon isOpen={openSections[section.id]} />
               </button>
 

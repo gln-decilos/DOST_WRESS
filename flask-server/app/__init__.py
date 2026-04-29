@@ -64,6 +64,7 @@ def create_app():
     from app.models.permission import Permission
     from app.models.user_roles import UserRole
     from app.models.role_permissions import RolePermission
+    from app.models.project_stakeholder import ProjectStakeholder
 
     from app.models.document_templates import DocumentTemplate
     from app.models.document_template_section import DocumentTemplateSection
@@ -74,6 +75,7 @@ def create_app():
 
     from app.models.requirement_item import RequirementItem
     from app.models.requirement_item_value import RequirementItemValue
+    from app.models.notification import Notification
 
     # ROUTES
     from app.routes.auth_routes import auth_bp
@@ -88,14 +90,18 @@ def create_app():
     from app.routes.template_routes import template_bp
     from app.routes.vision_scope_routes import vision_scope_bp
     from app.routes.requirements_routes import requirements_bp
+    from app.routes.project_stakeholder_routes import project_stakeholder_bp
     from app.routes.orgadmin_project_routes import orgadmin_project_bp 
 
     from app.routes.admin_template_routes import admin_template_bp
     from app.routes.admin_template_section_routes import admin_template_section_bp
     from app.routes.admin_template_field_routes import admin_template_field_bp
 
+    from app.routes.notification_routes import notification_bp
+
     # BLUEPRINT REGISTRATION
     app.register_blueprint(auth_bp)
+
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(organization_bp, url_prefix="/api/admin/organizations")
     # FIXED: Register user_bp with /api/users prefix (not /api/admin/users)
@@ -108,6 +114,10 @@ def create_app():
     app.register_blueprint(template_bp, url_prefix="/api/templates")
     app.register_blueprint(vision_scope_bp, url_prefix="/api/business-analyst")
     app.register_blueprint(requirements_bp, url_prefix="/api/business-analyst")
+    app.register_blueprint(project_stakeholder_bp, url_prefix="/api/business-analyst")
+
+    # FIXED: correct prefix
+    app.register_blueprint(notification_bp, url_prefix="/api")
     app.register_blueprint(orgadmin_project_bp, url_prefix="/api/orgadmin/projects") 
 
     app.register_blueprint(admin_template_bp)
