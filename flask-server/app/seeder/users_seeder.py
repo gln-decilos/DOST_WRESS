@@ -8,15 +8,15 @@ from werkzeug.security import generate_password_hash
 def seed_users_with_roles():
     print("Seeding users and user_roles...")
 
-    # Must match EXACT names from your role seeder
     users_data = [
-        ("Admin", "User", "admin@wress.com", "System Admin"),
-        ("Business", "Analyst", "ba@wress.com", "Business Analyst"),
-        ("Product", "Owner", "po@wress.com", "Product Owner"),
-        ("Project", "Manager", "pm@wress.com", "Project Manager"),
-        ("Developer", "User", "dev@wress.com", "Developer"),
-        ("Tester", "User", "tester@wress.com", "Tester"),
-        ("Stakeholder", "User", "stakeholder@wress.com", "Stakeholder"),
+        ("Admin", "User", "admin@wress.com", "System Admin", "System Admin"),
+        ("Org", "Admin", "org@wress.com", "Organization Admin", "Organization Admin"),
+        ("Business", "Analyst", "ba@wress.com", "Business Analyst", "Stakeholder"),
+        ("Product", "Owner", "po@wress.com", "Product Owner", "Stakeholder"),
+        ("Project", "Manager", "pm@wress.com", "Project Manager", "Stakeholder"),
+        ("Developer", "User", "dev@wress.com", "Developer", "Stakeholder"),
+        ("Tester", "User", "tester@wress.com", "Tester", "Stakeholder"),
+        ("Stakeholder", "User", "stakeholder@wress.com", "Stakeholder", "Stakeholder"),
     ]
 
     created_users = 0
@@ -24,11 +24,8 @@ def seed_users_with_roles():
     skipped_users = 0
     skipped_links = 0
 
-    for first_name, last_name, email, role_name in users_data:
+    for first_name, last_name, email, role_name, user_type in users_data:
 
-        # -----------------------
-        # USER
-        # -----------------------
         user = User.query.filter_by(email=email).first()
 
         if not user:
@@ -37,7 +34,8 @@ def seed_users_with_roles():
                 last_name=last_name,
                 email=email,
                 password_hash=generate_password_hash("Password123!"),
-                is_active=True
+                is_active=True,
+                user_type=user_type
             )
             db.session.add(user)
             db.session.flush()
@@ -45,18 +43,12 @@ def seed_users_with_roles():
         else:
             skipped_users += 1
 
-        # -----------------------
-        # ROLE
-        # -----------------------
         role = Role.query.filter_by(name=role_name).first()
 
         if not role:
-            print(f"❌ Missing role: {role_name}")
+            print(f"Missing role: {role_name}")
             continue
 
-        # -----------------------
-        # USER_ROLE LINK
-        # -----------------------
         existing_link = UserRole.query.filter_by(
             user_id=user.id,
             role_id=role.id
