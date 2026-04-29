@@ -15,6 +15,7 @@ type Role = {
   name: string
   description?: string
   permissions: Permission[]
+  organization_id?: number | null
 }
 
 const ROLES_API_URL = "http://localhost:5000/api/admin/roles/"
@@ -37,10 +38,23 @@ export default function RolesPageView() {
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(true)
   const [message, setMessage] = useState("")
+  const [messageType, setMessageType] = useState<"success" | "error" | "info">("info")
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isAddMode, setIsAddMode] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
+
+  const getToken = () => {
+    return localStorage.getItem("token")
+  }
+
+  const showMessage = (msg: string, type: "success" | "error" | "info" = "info") => {
+    setMessageType(type)
+    setMessage(msg)
+    if (type === "success") {
+      setTimeout(() => setMessage(""), 3000)
+    }
+  }
 
   const parseJsonSafely = (text: string) => {
     try {
@@ -55,12 +69,28 @@ export default function RolesPageView() {
       setFetching(true)
       setMessage("")
 
-      const res = await fetch(ROLES_API_URL)
+      const token = getToken()
+      if (!token) {
+        showMessage("No authentication token found", "error")
+        return
+      }
+
+      const res = await fetch(ROLES_API_URL, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+      })
       const text = await res.text()
+
+      if (res.status === 401) {
+        showMessage("Session expired. Please sign in again.", "error")
+        return
+      }
 
       if (!res.ok) {
         console.error("Failed to fetch roles:", res.status, text)
-        setMessage("Failed to fetch roles")
+        showMessage("Failed to fetch roles", "error")
         return
       }
 
@@ -68,14 +98,14 @@ export default function RolesPageView() {
 
       if (!data) {
         console.error("Invalid JSON response for roles:", text)
-        setMessage("Invalid response from server")
+        showMessage("Invalid response from server", "error")
         return
       }
 
       setRoles(data)
     } catch (error) {
       console.error("Failed to fetch roles:", error)
-      setMessage("Failed to fetch roles")
+      showMessage("Failed to fetch roles", "error")
     } finally {
       setFetching(false)
     }
@@ -83,7 +113,15 @@ export default function RolesPageView() {
 
   const fetchPermissions = async () => {
     try {
-      const res = await fetch(PERMISSIONS_API_URL)
+      const token = getToken()
+      if (!token) return
+
+      const res = await fetch(PERMISSIONS_API_URL, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+      })
       const text = await res.text()
 
       if (!res.ok) {
@@ -177,6 +215,12 @@ export default function RolesPageView() {
     setMessage("")
 
     try {
+      const token = getToken()
+      if (!token) {
+        showMessage("No authentication token found", "error")
+        return
+      }
+
       const method = selectedRole.id ? "PUT" : "POST"
       const url = selectedRole.id
         ? `${ROLES_API_URL}${selectedRole.id}`
@@ -191,6 +235,7 @@ export default function RolesPageView() {
       const res = await fetch(url, {
         method,
         headers: {
+          "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
@@ -201,21 +246,26 @@ export default function RolesPageView() {
 
       if (!data && text) {
         console.error("Invalid JSON response while saving role:", text)
-        setMessage("Server returned an invalid response")
+        showMessage("Server returned an invalid response", "error")
+        return
+      }
+
+      if (res.status === 401) {
+        showMessage("Session expired. Please sign in again.", "error")
         return
       }
 
       if (!res.ok) {
-        setMessage(data?.error || data?.message || "Something went wrong")
+        showMessage(data?.error || data?.message || "Something went wrong", "error")
         return
       }
 
-      setMessage(data?.message || "Saved successfully")
+      showMessage(data?.message || "Saved successfully", "success")
       await fetchRoles()
       closeModal()
     } catch (error) {
       console.error("Failed to save role:", error)
-      setMessage("Failed to save role")
+      showMessage("Failed to save role", "error")
     } finally {
       setLoading(false)
     }
@@ -228,8 +278,18 @@ export default function RolesPageView() {
       setLoading(true)
       setMessage("")
 
+      const token = getToken()
+      if (!token) {
+        showMessage("No authentication token found", "error")
+        return
+      }
+
       const res = await fetch(`${ROLES_API_URL}${roleToDelete.id}`, {
         method: "DELETE",
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
       })
 
       const text = await res.text()
@@ -237,16 +297,21 @@ export default function RolesPageView() {
 
       if (!data && text) {
         console.error("Invalid JSON response while deleting role:", text)
-        setMessage("Server returned an invalid response")
+        showMessage("Server returned an invalid response", "error")
+        return
+      }
+
+      if (res.status === 401) {
+        showMessage("Session expired. Please sign in again.", "error")
         return
       }
 
       if (!res.ok) {
-        setMessage(data?.error || data?.message || "Failed to delete role")
+        showMessage(data?.error || data?.message || "Failed to delete role", "error")
         return
       }
 
-      setMessage(data?.message || "Role deleted successfully")
+      showMessage(data?.message || "Role deleted successfully", "success")
 
       const updatedRoles = roles.filter((role) => role.id !== roleToDelete.id)
       const newTotalPages = Math.max(1, Math.ceil(updatedRoles.length / ITEMS_PER_PAGE))
@@ -259,9 +324,20 @@ export default function RolesPageView() {
       closeDeleteModal()
     } catch (error) {
       console.error("Delete failed:", error)
-      setMessage("Failed to delete role")
+      showMessage("Failed to delete role", "error")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const getMessageStyles = () => {
+    switch (messageType) {
+      case "success":
+        return "bg-green-500/10 border-green-500/30 text-green-600"
+      case "error":
+        return "bg-red-500/10 border-red-500/30 text-red-600"
+      default:
+        return "border-border bg-background text-muted-foreground"
     }
   }
 
@@ -284,7 +360,7 @@ export default function RolesPageView() {
       </div>
 
       {message && (
-        <div className="mb-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+        <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${getMessageStyles()}`}>
           {message}
         </div>
       )}
@@ -317,17 +393,14 @@ export default function RolesPageView() {
                 paginatedRoles.map((role) => (
                   <tr key={role.id} className="border-t border-border">
                     <td className="px-4 py-3 font-medium text-foreground">{role.name}</td>
-
                     <td className="px-4 py-3 text-muted-foreground">
                       {role.description || "-"}
                     </td>
-
                     <td className="px-4 py-3 text-muted-foreground">
                       {role.permissions.length > 0
                         ? role.permissions.map((permission) => permission.label).join(", ")
                         : "-"}
                     </td>
-
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <button
@@ -372,11 +445,10 @@ export default function RolesPageView() {
                 <button
                   key={page}
                   onClick={() => setCurrentPage(page)}
-                  className={`rounded-lg px-3 py-1.5 text-sm ${
-                    currentPage === page
-                      ? "bg-primary text-primary-foreground"
-                      : "border border-border text-foreground hover:bg-muted"
-                  }`}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${currentPage === page
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-border text-foreground hover:bg-muted"
+                    }`}
                 >
                   {page}
                 </button>
@@ -394,6 +466,7 @@ export default function RolesPageView() {
         )}
       </div>
 
+      { }
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
@@ -467,8 +540,6 @@ export default function RolesPageView() {
                 </div>
               </div>
 
-              {message && <p className="text-sm text-muted-foreground">{message}</p>}
-
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="submit"
@@ -501,6 +572,7 @@ export default function RolesPageView() {
         </div>
       )}
 
+      {/* Delete Confirmation Modal - same as before */}
       {isDeleteModalOpen && roleToDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
