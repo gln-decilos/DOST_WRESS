@@ -7,6 +7,20 @@ const ADMIN_TEMPLATE_SECTION_API_BASE_URL =
 const ADMIN_TEMPLATE_FIELD_API_BASE_URL =
   "http://localhost:5000/api/admin/template-fields"
 
+// Helper to get auth token
+const getAuthToken = (): string | null => {
+  return localStorage.getItem('token') || sessionStorage.getItem('token')
+}
+
+// Helper to get headers with auth
+const getAuthHeaders = (): HeadersInit => {
+  const token = getAuthToken()
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { "Authorization": `Bearer ${token}` } : {})
+  }
+}
+
 async function parseResponse<T>(
   res: Response,
   fallbackMessage: string
@@ -15,7 +29,7 @@ async function parseResponse<T>(
   const data = text ? JSON.parse(text) : {}
 
   if (!res.ok) {
-    throw new Error(data.message || fallbackMessage)
+    throw new Error(data.message || data.error || fallbackMessage)
   }
 
   return data as T
@@ -27,6 +41,7 @@ export async function getDefaultTemplate(
   const res = await fetch(`${TEMPLATE_API_BASE_URL}/${moduleCode}/default`, {
     method: "GET",
     credentials: "include",
+    headers: getAuthHeaders(),
   })
 
   const data = await parseResponse<{ template: DocumentTemplate }>(
@@ -47,6 +62,7 @@ export async function getAdminTemplates(
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
+    headers: getAuthHeaders(),
   })
 
   const data = await parseResponse<{ templates: DocumentTemplate[] }>(
@@ -63,6 +79,7 @@ export async function getAdminTemplate(
   const res = await fetch(`${ADMIN_TEMPLATE_API_BASE_URL}/${templateId}`, {
     method: "GET",
     credentials: "include",
+    headers: getAuthHeaders(),
   })
 
   const data = await parseResponse<{ template: DocumentTemplate }>(
@@ -85,9 +102,7 @@ export async function createAdminTemplate(payload: {
   const res = await fetch(ADMIN_TEMPLATE_API_BASE_URL, {
     method: "POST",
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   })
 
@@ -113,9 +128,7 @@ export async function updateAdminTemplate(
   const res = await fetch(`${ADMIN_TEMPLATE_API_BASE_URL}/${templateId}`, {
     method: "PUT",
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   })
 
@@ -131,6 +144,7 @@ export async function deleteAdminTemplate(templateId: number): Promise<void> {
   const res = await fetch(`${ADMIN_TEMPLATE_API_BASE_URL}/${templateId}`, {
     method: "DELETE",
     credentials: "include",
+    headers: getAuthHeaders(),
   })
 
   await parseResponse<{ message: string }>(res, "Failed to delete template")
@@ -144,6 +158,7 @@ export async function setDefaultAdminTemplate(
     {
       method: "PUT",
       credentials: "include",
+      headers: getAuthHeaders(),
     }
   )
 
@@ -163,6 +178,7 @@ export async function duplicateAdminTemplate(
     {
       method: "POST",
       credentials: "include",
+      headers: getAuthHeaders(),
     }
   )
 
@@ -188,9 +204,7 @@ export async function createTemplateSection(
     {
       method: "POST",
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify(payload),
     }
   )
@@ -215,9 +229,7 @@ export async function updateTemplateSection(
   const res = await fetch(`${ADMIN_TEMPLATE_SECTION_API_BASE_URL}/${sectionId}`, {
     method: "PUT",
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   })
 
@@ -233,6 +245,7 @@ export async function deleteTemplateSection(sectionId: number): Promise<void> {
   const res = await fetch(`${ADMIN_TEMPLATE_SECTION_API_BASE_URL}/${sectionId}`, {
     method: "DELETE",
     credentials: "include",
+    headers: getAuthHeaders(),
   })
 
   await parseResponse<{ message: string }>(res, "Failed to delete section")
@@ -257,9 +270,7 @@ export async function createTemplateField(
     {
       method: "POST",
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify(payload),
     }
   )
@@ -289,9 +300,7 @@ export async function updateTemplateField(
   const res = await fetch(`${ADMIN_TEMPLATE_FIELD_API_BASE_URL}/${fieldId}`, {
     method: "PUT",
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   })
 
@@ -307,6 +316,7 @@ export async function deleteTemplateField(fieldId: number): Promise<void> {
   const res = await fetch(`${ADMIN_TEMPLATE_FIELD_API_BASE_URL}/${fieldId}`, {
     method: "DELETE",
     credentials: "include",
+    headers: getAuthHeaders(),
   })
 
   await parseResponse<{ message: string }>(res, "Failed to delete field")

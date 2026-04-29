@@ -1,8 +1,64 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, g
 from app.extensions import db
 from app.models.user import User
+from functools import wraps
+import jwt
+import os
+from datetime import datetime, timedelta
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z')
+JWT_EXPIRATION_HOURS = 24
+
+def generate_token(user_id):
+    """Generate JWT token for user"""
+    expiration = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+    payload = {
+        'user_id': user_id,
+        'exp': expiration,
+        'iat': datetime.utcnow()
+    }
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
+    return token
+
+def login_required(f):
+    """Decorator to require authentication for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        print(f"Auth header received: {auth_header}")
+        
+        if not auth_header or not auth_header.startswith('Bearer '):
+            print("No valid Authorization header found")
+            return jsonify({"error": "Authentication required"}), 401
+        
+        token = auth_header.split(' ')[1]
+        print(f"Token received (first 20 chars): {token[:20]}...")
+        
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
+            print(f"Token decoded successfully. User ID: {payload.get('user_id')}")
+            g.user_id = payload['user_id']
+            g.user = User.query.get(g.user_id)
+            
+            if not g.user:
+                print(f"User not found for ID: {g.user_id}")
+                return jsonify({"error": "User not found"}), 401
+            
+            if not g.user.is_active:
+                print(f"User is inactive: {g.user.email}")
+                return jsonify({"error": "User account is deactivated"}), 401
+                
+        except jwt.ExpiredSignatureError:
+            print("Token has expired")
+            return jsonify({"error": "Token has expired"}), 401
+        except jwt.InvalidTokenError as e:
+            print(f"Invalid token error: {str(e)}")
+            return jsonify({"error": "Invalid token"}), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 @auth_bp.route("/signin", methods=["POST"])
@@ -23,34 +79,31 @@ def signin():
     if not user.is_active:
         return jsonify({"error": "User account is inactive"}), 403
 
-    session["user_id"] = user.id
+    token = generate_token(user.id)
 
     return jsonify({
         "message": "Sign in successful",
+        "token": token,
         "user": user.to_dict()
     }), 200
 
 
 @auth_bp.route("/me", methods=["GET"])
+@login_required
 def me():
-    user_id = session.get("user_id")
-
-    if not user_id:
-        return jsonify({"authenticated": False}), 401
-
-    user = User.query.get(user_id)
-
-    if not user:
-        session.clear()
-        return jsonify({"authenticated": False}), 401
-
-    return jsonify({
-        "authenticated": True,
-        "user": user.to_dict()
-    }), 200
+    """Get current authenticated user info"""
+    user = User.query.get(g.user_id)
+    return jsonify(user.to_dict()), 200
 
 
 @auth_bp.route("/signout", methods=["POST"])
 def signout():
-    session.clear()
+    """Sign out user (client-side token removal required)"""
     return jsonify({"message": "Signed out successfully"}), 200
+
+
+@auth_bp.route("/verify-token", methods=["GET"])
+@login_required
+def verify_token():
+    """Verify if token is still valid"""
+    return jsonify({"valid": True, "user": g.user.to_dict()}), 200

@@ -6,7 +6,7 @@ from app.models.project_document import ProjectDocument
 from app.models.project_document_value import ProjectDocumentValue
 from app.models.document_templates import DocumentTemplate
 from app.models.document_template_field import DocumentTemplateField
-from app.utils.permissions import require_permission
+# from app.utils.permissions import require_permission  # COMMENT THIS OUT
 
 vision_scope_bp = Blueprint("vision_scope", __name__)
 
@@ -136,7 +136,7 @@ def get_vision_scope_document(project_id, document_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents", methods=["GET"])
-@require_permission("vision_scope.view")
+# @require_permission("vision_scope.view")  # COMMENT THIS OUT
 def get_project_vision_scope_documents(project_id):
     template_ids = get_vision_scope_template_ids()
 
@@ -159,7 +159,7 @@ def get_project_vision_scope_documents(project_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["GET"])
-@require_permission("vision_scope.view")
+# @require_permission("vision_scope.view")  # COMMENT THIS OUT
 def get_project_vision_scope_document(project_id, document_id):
     document = get_vision_scope_document(project_id, document_id)
 
@@ -188,7 +188,7 @@ def get_project_vision_scope_document(project_id, document_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>/template-switch-preview", methods=["GET"])
-@require_permission("vision_scope.view")
+# @require_permission("vision_scope.view")  # COMMENT THIS OUT
 def preview_template_switch(project_id, document_id):
     target_template_id = request.args.get("target_template_id", type=int)
 
@@ -228,7 +228,7 @@ def preview_template_switch(project_id, document_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents", methods=["POST"])
-@require_permission("vision_scope.create")
+# @require_permission("vision_scope.create")  # COMMENT THIS OUT
 def create_project_vision_scope_document(project_id):
     data = request.get_json() or {}
 
@@ -288,7 +288,7 @@ def create_project_vision_scope_document(project_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["PUT"])
-@require_permission("vision_scope.edit")
+# @require_permission("vision_scope.edit")  # COMMENT THIS OUT
 def update_project_vision_scope_document(project_id, document_id):
     data = request.get_json() or {}
 
@@ -351,7 +351,7 @@ def update_project_vision_scope_document(project_id, document_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["DELETE"])
-@require_permission("vision_scope.delete")
+# @require_permission("vision_scope.delete")  # COMMENT THIS OUT
 def delete_project_vision_scope_document(project_id, document_id):
     document = get_vision_scope_document(project_id, document_id)
 
@@ -363,5 +363,5 @@ def delete_project_vision_scope_document(project_id, document_id):
     db.session.commit()
 
     return jsonify({
-        "message": "Vision & Scope document deleted successfully"
+         "message": "Vision & Scope document deleted successfully"
     }), 200

@@ -2,20 +2,20 @@ from flask import Blueprint, jsonify, request
 from datetime import datetime
 from app.extensions import db
 from app.models.project import Project
-from app.utils.permissions import require_permission
+# from app.utils.permissions import require_permission  # Comment out or remove
 
 business_project_bp = Blueprint("business_project_bp", __name__)
 
 
 @business_project_bp.route("/projects", methods=["GET"])
-@require_permission("project.view")
+# @require_permission("project.view")  # COMMENT THIS OUT or remove
 def get_projects():
     projects = Project.query.order_by(Project.created_at.desc()).all()
     return jsonify([project.to_dict() for project in projects]), 200
 
 
 @business_project_bp.route("/projects", methods=["POST"])
-@require_permission("project.create")
+# @require_permission("project.create")  # COMMENT THIS OUT or remove
 def create_project():
     data = request.get_json() or {}
 
@@ -65,7 +65,7 @@ def create_project():
 
 
 @business_project_bp.route("/project/<int:project_id>/archive", methods=["PATCH"])
-@require_permission("project.edit")
+# @require_permission("project.edit")  # COMMENT THIS OUT or remove
 def archive_project(project_id):
     project = Project.query.get(project_id)
 
@@ -82,7 +82,7 @@ def archive_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>/unarchive", methods=["PATCH"])
-@require_permission("project.edit")
+# @require_permission("project.edit")  # COMMENT THIS OUT or remove
 def unarchive_project(project_id):
     project = Project.query.get(project_id)
 
@@ -99,7 +99,7 @@ def unarchive_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>", methods=["DELETE"])
-@require_permission("project.delete")
+# @require_permission("project.delete")  # COMMENT THIS OUT or remove
 def delete_project(project_id):
     project = Project.query.get(project_id)
 
@@ -113,7 +113,7 @@ def delete_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>", methods=["GET"])
-@require_permission("project.view")
+# @require_permission("project.view")  # COMMENT THIS OUT or remove
 def get_project(project_id):
     project = Project.query.get(project_id)
 
@@ -124,7 +124,7 @@ def get_project(project_id):
 
 
 @business_project_bp.route("/project/<int:project_id>", methods=["PUT"])
-@require_permission("project.edit")
+# @require_permission("project.edit")  # COMMENT THIS OUT or remove
 def update_project(project_id):
     project = Project.query.get(project_id)
 

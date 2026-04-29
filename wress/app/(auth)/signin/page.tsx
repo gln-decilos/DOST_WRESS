@@ -3,12 +3,9 @@
 import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 
 const API_BASE_URL = "http://localhost:5000/api/auth"
-type UserRole = {
-  id: number
-  name: string
-}
 
 type SignedInUser = {
   id: number
@@ -16,29 +13,29 @@ type SignedInUser = {
   last_name: string
   full_name: string
   email: string
-  roles: UserRole[]
+  user_type: "System Admin" | "Organization Admin" | "Stakeholder"
 }
 
-export default function SignInPage() {
+function SignInContent() {
   const router = useRouter()
+  const { login } = useAuth()
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
 
-  const getRedirectPathByRole = (roles: UserRole[]) => {
-    const roleNames = roles.map((role) => role.name)
-
-    if (roleNames.includes("System Admin")) {
-      return "/dashboard"
+  const getRedirectPathByUserType = (user_type: string) => {
+    switch (user_type) {
+      case "System Admin":
+        return "/sys-admin/dashboard"
+      case "Organization Admin":
+        return "/org-admin/dashboard"
+      case "Stakeholder":
+        return "/stakeholder/dashboard"
+      default:
+        return "/signin"
     }
-
-    if (roleNames.includes("Business Analyst")) {
-      return "/dashboard"
-    }
-
-    return "/signin"
   }
 
   const handleSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -60,9 +57,11 @@ export default function SignInPage() {
       })
 
       const data = await response.json()
+      console.log("SIGNIN RESPONSE:", data)
+      console.log("STATUS:", response.status)
 
       if (!response.ok) {
-        setMessage(data.message || "Sign in failed.")
+        setMessage(data.message || data.error || "Sign in failed.")
         return
       }
 
@@ -73,7 +72,19 @@ export default function SignInPage() {
         return
       }
 
-      const redirectPath = getRedirectPathByRole(user.roles || [])
+      if (data.token) {
+        localStorage.setItem('token', data.token)
+        console.log("Token stored successfully")
+      } else {
+        console.error("No token received from server")
+        setMessage("Authentication failed. Please try again.")
+        return
+      }
+
+      login(user)
+      console.log("User signed in successfully. ID saved:", user.id)
+
+      const redirectPath = getRedirectPathByUserType(user.user_type)
 
       if (redirectPath === "/signin") {
         setMessage("No dashboard is available for your role yet.")
@@ -82,6 +93,7 @@ export default function SignInPage() {
 
       router.push(redirectPath)
     } catch (error) {
+      console.error("Sign in error:", error)
       setMessage("Unable to connect to the server.")
     } finally {
       setLoading(false)
@@ -104,7 +116,7 @@ export default function SignInPage() {
             <span className="text-sm text-muted-foreground">Email</span>
             <input
               type="email"
-              className="h-10 rounded-md bg-background ring-1 ring-border px-3 outline-none"
+              className="h-10 rounded-md bg-background ring-1 ring-border px-3 outline-none focus:ring-2 focus:ring-brand"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
@@ -116,7 +128,7 @@ export default function SignInPage() {
             <span className="text-sm text-muted-foreground">Password</span>
             <input
               type="password"
-              className="h-10 rounded-md bg-background ring-1 ring-border px-3 outline-none"
+              className="h-10 rounded-md bg-background ring-1 ring-border px-3 outline-none focus:ring-2 focus:ring-brand"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
@@ -124,24 +136,36 @@ export default function SignInPage() {
             />
           </label>
 
-          {message && <p className="text-sm text-red-500">{message}</p>}
+          {message && (
+            <p className="text-sm text-red-500 bg-red-50 p-2 rounded-md">
+              {message}
+            </p>
+          )}
 
           <button
             type="submit"
             disabled={loading}
-            className="h-10 rounded-md bg-brand text-background disabled:opacity-50"
+            className="h-10 rounded-md bg-brand text-background disabled:opacity-50 hover:bg-brand/90 transition-colors"
           >
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
 
         <p className="mt-4 mb-3 text-sm text-muted-foreground">
-          Don’t have an account?{" "}
-          <Link href="/signup" className="text-brand">
+          Don't have an account?{" "}
+          <Link href="/signup" className="text-brand hover:underline">
             Sign up
           </Link>
         </p>
       </div>
     </main>
+  )
+}
+
+export default function SignInPage() {
+  return (
+    <AuthProvider>
+      <SignInContent />
+    </AuthProvider>
   )
 }
