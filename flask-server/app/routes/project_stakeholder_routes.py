@@ -6,6 +6,7 @@ from app.models.role import Role
 from app.models.user_roles import UserRole
 from app.models.project_stakeholder import ProjectStakeholder
 from app.models.organization_member import OrganizationMember
+from app.utils.permissions import require_permission
 from functools import wraps
 from sqlalchemy import or_
 import jwt
@@ -15,6 +16,7 @@ project_stakeholder_bp = Blueprint("project_stakeholder_bp", __name__)
 
 ALLOWED_STAKEHOLDER_STATUSES = {"Active", "Inactive"}
 NON_ASSIGNABLE_ROLE_NAMES = {"System Admin", "Organization Admin"}
+
 JWT_SECRET_KEY = os.environ.get(
     "JWT_SECRET_KEY",
     "xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z"
@@ -73,7 +75,9 @@ def get_project_or_error(project_id):
         return None, jsonify({"message": "Project not found"}), 404
 
     if not user_has_project_access(g.user_id, project_id):
-        return None, jsonify({"message": "You don't have permission to access this project"}), 403
+        return None, jsonify({
+            "message": "You don't have permission to access this project"
+        }), 403
 
     return project, None, None
 
@@ -86,6 +90,7 @@ def get_assignable_roles_query(project):
             Role.organization_id == project.organization_id
         )
     )
+
 
 def parse_int(value):
     try:
@@ -213,6 +218,7 @@ def serialize_project_stakeholder(stakeholder):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholder-roles", methods=["GET"])
 @login_required
+@require_permission("project_members.view", project_arg="project_id")
 def get_project_stakeholder_roles(project_id):
     project, error_response, status_code = get_project_or_error(project_id)
 
@@ -232,6 +238,7 @@ def get_project_stakeholder_roles(project_id):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholder-users", methods=["GET"])
 @login_required
+@require_permission("project_members.view", project_arg="project_id")
 def get_project_stakeholder_users(project_id):
     project, error_response, status_code = get_project_or_error(project_id)
 
@@ -259,6 +266,7 @@ def get_project_stakeholder_users(project_id):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders", methods=["GET"])
 @login_required
+@require_permission("project_members.view", project_arg="project_id")
 def get_project_stakeholders(project_id):
     project, error_response, status_code = get_project_or_error(project_id)
 
@@ -284,6 +292,7 @@ def get_project_stakeholders(project_id):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders/<int:stakeholder_id>", methods=["GET"])
 @login_required
+@require_permission("project_members.view", project_arg="project_id")
 def get_project_stakeholder(project_id, stakeholder_id):
     project, error_response, status_code = get_project_or_error(project_id)
 
@@ -311,6 +320,7 @@ def get_project_stakeholder(project_id, stakeholder_id):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders", methods=["POST"])
 @login_required
+@require_permission("project_members.manage", project_arg="project_id")
 def create_project_stakeholder(project_id):
     project, error_response, status_code = get_project_or_error(project_id)
 
@@ -410,6 +420,7 @@ def create_project_stakeholder(project_id):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders/<int:stakeholder_id>", methods=["PUT"])
 @login_required
+@require_permission("project_members.manage", project_arg="project_id")
 def update_project_stakeholder(project_id, stakeholder_id):
     project, error_response, status_code = get_project_or_error(project_id)
 
@@ -498,6 +509,7 @@ def update_project_stakeholder(project_id, stakeholder_id):
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders/<int:stakeholder_id>", methods=["DELETE"])
 @login_required
+@require_permission("project_members.manage", project_arg="project_id")
 def delete_project_stakeholder(project_id, stakeholder_id):
     project, error_response, status_code = get_project_or_error(project_id)
 

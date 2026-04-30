@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import type { ChangeEvent, FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 type Project = {
@@ -51,6 +52,7 @@ type StakeholderForm = {
 }
 
 const BUSINESS_API_BASE_URL = "http://localhost:5000/api/business-analyst"
+const ACCESS_API_BASE_URL = "http://localhost:5000/api/access"
 
 const emptyForm: StakeholderForm = {
   user_id: "",
@@ -87,6 +89,9 @@ export default function ProjectStakeholdersPage() {
   const projectIdParam = searchParams.get("id")
   const projectId = projectIdParam ? Number(projectIdParam) : null
 
+  const [canManageStakeholders, setCanManageStakeholders] = useState(false)
+  const [permissionLoading, setPermissionLoading] = useState(true)
+
   const [project, setProject] = useState<Project | null>(null)
   const [projectLoading, setProjectLoading] = useState(true)
 
@@ -110,6 +115,8 @@ export default function ProjectStakeholdersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isAddMode, setIsAddMode] = useState(true)
+
+  const canShowManageActions = !permissionLoading && canManageStakeholders
 
   const existingUserIds = useMemo(() => {
     return new Set(stakeholders.map((stakeholder) => stakeholder.user_id))
@@ -144,6 +151,50 @@ export default function ProjectStakeholdersPage() {
         ? "bg-primary text-primary-foreground"
         : "border border-border text-foreground hover:bg-muted"
     }`
+
+  const checkManageStakeholderPermission = async () => {
+    if (!projectId || isNaN(projectId)) {
+      setCanManageStakeholders(false)
+      setPermissionLoading(false)
+      return
+    }
+
+    try {
+      setPermissionLoading(true)
+
+      const token = getAuthToken()
+
+      if (!token) {
+        setCanManageStakeholders(false)
+        router.push("/signin")
+        return
+      }
+
+      const res = await fetch(`${ACCESS_API_BASE_URL}/check`, {
+        method: "POST",
+        headers: createAuthHeaders(),
+        credentials: "include",
+        body: JSON.stringify({
+          permission: "project_members.manage",
+          project_id: projectId,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setCanManageStakeholders(false)
+        return
+      }
+
+      setCanManageStakeholders(Boolean(data.allowed))
+    } catch (error) {
+      console.error("Failed to check stakeholder permission:", error)
+      setCanManageStakeholders(false)
+    } finally {
+      setPermissionLoading(false)
+    }
+  }
 
   const fetchProject = async () => {
     if (!projectId || isNaN(projectId)) return
@@ -310,9 +361,12 @@ export default function ProjectStakeholdersPage() {
     if (!projectId || isNaN(projectId) || projectId <= 0) {
       setProjectLoading(false)
       setFetching(false)
+      setCanManageStakeholders(false)
+      setPermissionLoading(false)
       return
     }
 
+    checkManageStakeholderPermission()
     fetchProject()
     fetchStakeholders()
     fetchUsers()
@@ -320,6 +374,8 @@ export default function ProjectStakeholdersPage() {
   }, [projectId])
 
   const openAddModal = () => {
+    if (!canShowManageActions) return
+
     setIsAddMode(true)
     setSelectedStakeholder(null)
     setSelectedUser(null)
@@ -330,6 +386,8 @@ export default function ProjectStakeholdersPage() {
   }
 
   const openEditModal = (stakeholder: Stakeholder) => {
+    if (!canShowManageActions) return
+
     setIsAddMode(false)
     setSelectedStakeholder(stakeholder)
     setSelectedUser(stakeholder.user)
@@ -353,6 +411,8 @@ export default function ProjectStakeholdersPage() {
   }
 
   const openDeleteModal = (stakeholder: Stakeholder) => {
+    if (!canShowManageActions) return
+
     setStakeholderToDelete(stakeholder)
     setIsDeleteModalOpen(true)
   }
@@ -380,7 +440,7 @@ export default function ProjectStakeholdersPage() {
     setUserSearch("")
   }
 
-  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleStatusChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const { value } = e.target
 
     setForm((prev) => ({
@@ -402,8 +462,13 @@ export default function ProjectStakeholdersPage() {
     })
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+
+    if (!canShowManageActions) {
+      setMessage("You don't have permission to manage stakeholders.")
+      return
+    }
 
     if (!projectId || isNaN(projectId)) {
       setMessage("Invalid project ID")
@@ -472,6 +537,11 @@ export default function ProjectStakeholdersPage() {
   }
 
   const confirmDelete = async () => {
+    if (!canShowManageActions) {
+      setMessage("You don't have permission to manage stakeholders.")
+      return
+    }
+
     if (!projectId || isNaN(projectId)) {
       setMessage("Invalid project ID")
       return
@@ -651,12 +721,14 @@ export default function ProjectStakeholdersPage() {
             </p>
           </div>
 
-          <button
-            onClick={openAddModal}
-            className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-          >
-            Add Stakeholder
-          </button>
+          {canShowManageActions && (
+            <button
+              onClick={openAddModal}
+              className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+            >
+              Add Stakeholder
+            </button>
+          )}
         </div>
 
         <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
@@ -677,7 +749,10 @@ export default function ProjectStakeholdersPage() {
                   <th className="px-4 py-3 font-medium">Email</th>
                   <th className="px-4 py-3 font-medium">Roles</th>
                   <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="w-40 px-4 py-3 font-medium">Actions</th>
+
+                  {canShowManageActions && (
+                    <th className="w-40 px-4 py-3 font-medium">Actions</th>
+                  )}
                 </tr>
               </thead>
 
@@ -685,7 +760,7 @@ export default function ProjectStakeholdersPage() {
                 {fetching ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={canShowManageActions ? 5 : 4}
                       className="px-4 py-6 text-center text-muted-foreground"
                     >
                       Loading stakeholders...
@@ -694,7 +769,7 @@ export default function ProjectStakeholdersPage() {
                 ) : stakeholders.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={canShowManageActions ? 5 : 4}
                       className="px-4 py-6 text-center text-muted-foreground"
                     >
                       No stakeholders added yet.
@@ -736,23 +811,25 @@ export default function ProjectStakeholdersPage() {
                         </span>
                       </td>
 
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openEditModal(stakeholder)}
-                            className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
-                          >
-                            Edit
-                          </button>
+                      {canShowManageActions && (
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => openEditModal(stakeholder)}
+                              className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+                            >
+                              Edit
+                            </button>
 
-                          <button
-                            onClick={() => openDeleteModal(stakeholder)}
-                            className="rounded-lg border border-destructive/30 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </td>
+                            <button
+                              onClick={() => openDeleteModal(stakeholder)}
+                              className="rounded-lg border border-destructive/30 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -762,7 +839,7 @@ export default function ProjectStakeholdersPage() {
         </div>
       </div>
 
-      {isModalOpen && (
+      {isModalOpen && canShowManageActions && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <div className="mb-4 flex items-center justify-between">
@@ -943,7 +1020,7 @@ export default function ProjectStakeholdersPage() {
         </div>
       )}
 
-      {isDeleteModalOpen && stakeholderToDelete && (
+      {isDeleteModalOpen && stakeholderToDelete && canShowManageActions && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">

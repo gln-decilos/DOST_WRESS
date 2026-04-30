@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import type { ChangeEvent, Dispatch, FormEvent, SetStateAction } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import RequirementsTabContent from "../requirements-tab-content"
 import {
@@ -117,6 +118,7 @@ type TemplateSwitchPreview = {
 
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const TEMPLATE_API_BASE_URL = "http://localhost:5000/api/templates"
+const ACCESS_API_BASE_URL = "http://localhost:5000/api/access"
 
 const getAuthToken = () => {
   if (typeof window !== "undefined") {
@@ -216,6 +218,12 @@ export default function ProjectDetailsPageView() {
   const projectId = projectIdParam ? Number(projectIdParam) : null
   const initialTab = searchParams.get("tab")
 
+  const [canUpdateProject, setCanUpdateProject] = useState(false)
+  const [canCreateVisionScope, setCanCreateVisionScope] = useState(false)
+  const [canUpdateVisionScope, setCanUpdateVisionScope] = useState(false)
+  const [canDeleteVisionScope, setCanDeleteVisionScope] = useState(false)
+  const [permissionLoading, setPermissionLoading] = useState(true)
+
   const [project, setProject] = useState<Project | null>(null)
   const [fetching, setFetching] = useState(true)
   const [loading, setLoading] = useState(false)
@@ -303,6 +311,14 @@ export default function ProjectDetailsPageView() {
     [publishedVisionScopes]
   )
 
+  const canUseVisionScopePrimaryAction = draftVisionScope
+    ? canUpdateVisionScope
+    : canCreateVisionScope
+
+  const canSaveCurrentVisionScope = editingVisionScope?.status === "Draft"
+    ? canUpdateVisionScope
+    : canCreateVisionScope
+
   const getFieldValueFromDocument = (
     document: ProjectDocument,
     fieldId: number
@@ -367,7 +383,7 @@ export default function ProjectDetailsPageView() {
 
   const resetOpenSections = (
     template: DocumentTemplate | null,
-    setter: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+    setter: Dispatch<SetStateAction<Record<number, boolean>>>
   ) => {
     if (!template) return
 
@@ -378,6 +394,72 @@ export default function ProjectDetailsPageView() {
     })
 
     setter(initialOpenSections)
+  }
+
+  const checkProjectPermission = async (permission: string) => {
+    if (!projectId || isNaN(projectId)) return false
+
+    try {
+      const token = getAuthToken()
+
+      if (!token) {
+        router.push("/signin")
+        return false
+      }
+
+      const res = await fetch(`${ACCESS_API_BASE_URL}/check`, {
+        method: "POST",
+        headers: createAuthHeaders(),
+        credentials: "include",
+        body: JSON.stringify({
+          permission,
+          project_id: projectId,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) return false
+
+      return Boolean(data.allowed)
+    } catch (error) {
+      console.error(`Failed to check permission: ${permission}`, error)
+      return false
+    }
+  }
+
+  const checkProjectPermissions = async () => {
+    if (!projectId || isNaN(projectId)) {
+      setCanUpdateProject(false)
+      setCanCreateVisionScope(false)
+      setCanUpdateVisionScope(false)
+      setCanDeleteVisionScope(false)
+      setPermissionLoading(false)
+      return
+    }
+
+    try {
+      setPermissionLoading(true)
+
+      const [
+        updateProjectAllowed,
+        createVisionScopeAllowed,
+        updateVisionScopeAllowed,
+        deleteVisionScopeAllowed,
+      ] = await Promise.all([
+        checkProjectPermission("projects.update"),
+        checkProjectPermission("vision_scope.create"),
+        checkProjectPermission("vision_scope.update"),
+        checkProjectPermission("vision_scope.delete"),
+      ])
+
+      setCanUpdateProject(updateProjectAllowed)
+      setCanCreateVisionScope(createVisionScopeAllowed)
+      setCanUpdateVisionScope(updateVisionScopeAllowed)
+      setCanDeleteVisionScope(deleteVisionScopeAllowed)
+    } finally {
+      setPermissionLoading(false)
+    }
   }
 
   const fetchProject = async () => {
@@ -527,6 +609,7 @@ export default function ProjectDetailsPageView() {
 
   useEffect(() => {
     if (projectId && !isNaN(projectId) && projectId > 0) {
+      checkProjectPermissions()
       fetchProject()
     }
   }, [projectId])
@@ -545,9 +628,7 @@ export default function ProjectDetailsPageView() {
   }, [activeTab, projectId, router])
 
   const handleProjectChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
+    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target
 
@@ -564,8 +645,14 @@ export default function ProjectDetailsPageView() {
     }))
   }
 
-  const handleUpdateProject = async (e: React.FormEvent) => {
+  const handleUpdateProject = async (e: FormEvent) => {
     e.preventDefault()
+
+    if (!canUpdateProject) {
+      setMessage("You don't have permission to update this project.")
+      return
+    }
+
     setLoading(true)
     setMessage("")
 
@@ -630,6 +717,16 @@ export default function ProjectDetailsPageView() {
   }
 
   const openCreateVisionScopeForm = async () => {
+    if (draftVisionScope && !canUpdateVisionScope) {
+      setMessage("You don't have permission to update Vision & Scope drafts.")
+      return
+    }
+
+    if (!draftVisionScope && !canCreateVisionScope) {
+      setMessage("You don't have permission to create Vision & Scope documents.")
+      return
+    }
+
     if (!defaultVisionScopeTemplate) return
 
     setMessage("")
@@ -733,6 +830,11 @@ export default function ProjectDetailsPageView() {
   }
 
   const openEditVisionScopeForm = async (document: ProjectDocument) => {
+    if (!canUpdateVisionScope) {
+      setMessage("You don't have permission to update Vision & Scope documents.")
+      return
+    }
+
     try {
       setMessage("")
 
@@ -826,6 +928,11 @@ export default function ProjectDetailsPageView() {
   }
 
   const saveVisionScopeDraft = async () => {
+    if (!canSaveCurrentVisionScope) {
+      setMessage("You don't have permission to save this Vision & Scope document.")
+      return
+    }
+
     if (!visionScopeTemplate) {
       setMessage("Template not found")
       return
@@ -897,6 +1004,11 @@ export default function ProjectDetailsPageView() {
   }
 
   const saveVisionScopeVersion = async (incrementType: VersionIncrementType) => {
+    if (!canSaveCurrentVisionScope) {
+      setMessage("You don't have permission to save this Vision & Scope version.")
+      return
+    }
+
     if (!visionScopeTemplate) {
       setMessage("Template not found")
       return
@@ -994,8 +1106,13 @@ export default function ProjectDetailsPageView() {
     }
   }
 
-  const handleOpenVisionScopePublishModal = async (e: React.FormEvent) => {
+  const handleOpenVisionScopePublishModal = async (e: FormEvent) => {
     e.preventDefault()
+
+    if (!canSaveCurrentVisionScope) {
+      setMessage("You don't have permission to save this Vision & Scope document.")
+      return
+    }
 
     if (!visionScopeTemplate) {
       setMessage("Template not found")
@@ -1011,12 +1128,16 @@ export default function ProjectDetailsPageView() {
   }
 
   const toggleVisionScopeSelection = (id: number) => {
+    if (!canDeleteVisionScope) return
+
     setSelectedVisionScopeIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     )
   }
 
   const toggleSelectAllVisionScopes = () => {
+    if (!canDeleteVisionScope) return
+
     if (
       previousVisionScopes.length > 0 &&
       selectedVisionScopeIds.length === previousVisionScopes.length
@@ -1029,6 +1150,11 @@ export default function ProjectDetailsPageView() {
   }
 
   const confirmDeleteVisionScope = async () => {
+    if (!canDeleteVisionScope) {
+      setMessage("You don't have permission to delete Vision & Scope documents.")
+      return
+    }
+
     if (!visionScopeToDelete) return
 
     try {
@@ -1345,7 +1471,7 @@ export default function ProjectDetailsPageView() {
               </p>
             </div>
 
-            {!isEditMode && (
+            {!permissionLoading && canUpdateProject && !isEditMode && (
               <button
                 onClick={() => setIsEditMode(true)}
                 className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
@@ -1535,21 +1661,23 @@ export default function ProjectDetailsPageView() {
               </p>
             </div>
 
-            {!isVisionScopeFormOpen && (
-              <button
-                onClick={openCreateVisionScopeForm}
-                disabled={!defaultVisionScopeTemplate || visionScopeTemplateLoading}
-                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-              >
-                {visionScopeTemplateLoading
-                  ? "Loading Template..."
-                  : draftVisionScope
-                    ? "Continue Draft"
-                    : visionScopeDocuments.length === 0
-                      ? "Create Vision & Scope"
-                      : "Create New Draft"}
-              </button>
-            )}
+            {!permissionLoading &&
+              canUseVisionScopePrimaryAction &&
+              !isVisionScopeFormOpen && (
+                <button
+                  onClick={openCreateVisionScopeForm}
+                  disabled={!defaultVisionScopeTemplate || visionScopeTemplateLoading}
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {visionScopeTemplateLoading
+                    ? "Loading Template..."
+                    : draftVisionScope
+                      ? "Continue Draft"
+                      : visionScopeDocuments.length === 0
+                        ? "Create Vision & Scope"
+                        : "Create New Draft"}
+                </button>
+              )}
           </div>
 
           {isVisionScopeFormOpen && visionScopeTemplate && (
@@ -1666,22 +1794,26 @@ export default function ProjectDetailsPageView() {
                 ))}
 
                 <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={saveVisionScopeDraft}
-                    disabled={loading}
-                    className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
-                  >
-                    {loading ? "Saving..." : "Save as Draft"}
-                  </button>
+                  {!permissionLoading && canSaveCurrentVisionScope && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={saveVisionScopeDraft}
+                        disabled={loading}
+                        className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
+                      >
+                        {loading ? "Saving..." : "Save as Draft"}
+                      </button>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-                  >
-                    {loading ? "Saving..." : "Save Version"}
-                  </button>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                      >
+                        {loading ? "Saving..." : "Save Version"}
+                      </button>
+                    </>
+                  )}
 
                   <button
                     type="button"
@@ -1715,23 +1847,27 @@ export default function ProjectDetailsPageView() {
                         Draft
                       </span>
 
-                      <button
-                        type="button"
-                        onClick={() => openEditVisionScopeForm(draftVisionScope)}
-                        className="rounded-lg border border-amber-300 bg-white p-2 text-amber-800 hover:bg-amber-100"
-                        title="Edit Draft"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
+                      {!permissionLoading && canUpdateVisionScope && (
+                        <button
+                          type="button"
+                          onClick={() => openEditVisionScopeForm(draftVisionScope)}
+                          className="rounded-lg border border-amber-300 bg-white p-2 text-amber-800 hover:bg-amber-100"
+                          title="Edit Draft"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
 
-                      <button
-                        type="button"
-                        onClick={() => setVisionScopeToDelete(draftVisionScope)}
-                        className="rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50"
-                        title="Delete Draft"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {!permissionLoading && canDeleteVisionScope && (
+                        <button
+                          type="button"
+                          onClick={() => setVisionScopeToDelete(draftVisionScope)}
+                          className="rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50"
+                          title="Delete Draft"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1792,25 +1928,29 @@ export default function ProjectDetailsPageView() {
                         <Eye className="h-4 w-4" />
                       </button>
 
-                      {!draftVisionScope && (
+                      {!permissionLoading &&
+                        canCreateVisionScope &&
+                        !draftVisionScope && (
+                          <button
+                            type="button"
+                            onClick={openCreateVisionScopeForm}
+                            className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                            title="Create Draft From Latest Version"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+
+                      {!permissionLoading && canDeleteVisionScope && (
                         <button
                           type="button"
-                          onClick={openCreateVisionScopeForm}
-                          className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                          title="Create Draft From Latest Version"
+                          onClick={() => setVisionScopeToDelete(latestVisionScope)}
+                          className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                          title="Delete Latest Version"
                         >
-                          <Pencil className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       )}
-
-                      <button
-                        type="button"
-                        onClick={() => setVisionScopeToDelete(latestVisionScope)}
-                        className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                        title="Delete Latest Version"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
                     </div>
                   </div>
 
@@ -1877,17 +2017,19 @@ export default function ProjectDetailsPageView() {
                     <table className="min-w-full text-sm">
                       <thead className="bg-muted/40 text-left text-foreground">
                         <tr>
-                          <th className="w-14 px-4 py-3 font-medium">
-                            <input
-                              type="checkbox"
-                              checked={
-                                previousVisionScopes.length > 0 &&
-                                selectedVisionScopeIds.length ===
-                                  previousVisionScopes.length
-                              }
-                              onChange={toggleSelectAllVisionScopes}
-                            />
-                          </th>
+                          {!permissionLoading && canDeleteVisionScope && (
+                            <th className="w-14 px-4 py-3 font-medium">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  previousVisionScopes.length > 0 &&
+                                  selectedVisionScopeIds.length ===
+                                    previousVisionScopes.length
+                                }
+                                onChange={toggleSelectAllVisionScopes}
+                              />
+                            </th>
+                          )}
                           <th className="px-4 py-3 font-medium">Version</th>
                           <th className="px-4 py-3 font-medium">Date Created</th>
                           <th className="px-4 py-3 font-medium">Date Modified</th>
@@ -1906,18 +2048,22 @@ export default function ProjectDetailsPageView() {
                               )
                             }
                           >
-                            <td
-                              className="px-4 py-3"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedVisionScopeIds.includes(
-                                  document.id
-                                )}
-                                onChange={() => toggleVisionScopeSelection(document.id)}
-                              />
-                            </td>
+                            {!permissionLoading && canDeleteVisionScope && (
+                              <td
+                                className="px-4 py-3"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedVisionScopeIds.includes(
+                                    document.id
+                                  )}
+                                  onChange={() =>
+                                    toggleVisionScopeSelection(document.id)
+                                  }
+                                />
+                              </td>
+                            )}
 
                             <td className="px-4 py-3 font-medium text-foreground">
                               {document.version}
@@ -1949,14 +2095,16 @@ export default function ProjectDetailsPageView() {
                                   <Eye className="h-4 w-4" />
                                 </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() => setVisionScopeToDelete(document)}
-                                  className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                                  title="Delete Version"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
+                                {!permissionLoading && canDeleteVisionScope && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setVisionScopeToDelete(document)}
+                                    className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                                    title="Delete Version"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2159,7 +2307,7 @@ export default function ProjectDetailsPageView() {
         </div>
       )}
 
-      {visionScopeToDelete && (
+      {visionScopeToDelete && canDeleteVisionScope && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
