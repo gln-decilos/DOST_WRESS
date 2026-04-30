@@ -89,12 +89,12 @@ PERMISSIONS = [
         "description": "Allows user to delete organizations.",
     },
 
-    # Project
+    # Projects
     {
         "key": "project.view",
         "label": "View Projects",
         "module": "project",
-        "description": "Allows user to view projects.",
+        "description": "Allows user to view projects assigned to them.",
     },
     {
         "key": "project.create",
@@ -106,13 +106,27 @@ PERMISSIONS = [
         "key": "project.edit",
         "label": "Edit Projects",
         "module": "project",
-        "description": "Allows user to edit projects.",
+        "description": "Allows user to edit project details and update project status.",
     },
     {
         "key": "project.delete",
         "label": "Delete Projects",
         "module": "project",
         "description": "Allows user to delete projects.",
+    },
+
+    # Project Members / Stakeholders
+    {
+        "key": "project_members.view",
+        "label": "View Project Members",
+        "module": "project_members",
+        "description": "Allows user to view project members and stakeholders.",
+    },
+    {
+        "key": "project_members.manage",
+        "label": "Manage Project Members",
+        "module": "project_members",
+        "description": "Allows user to add, update, and remove project members and stakeholders.",
     },
 
     # Vision and Scope
@@ -172,31 +186,60 @@ PERMISSIONS = [
         "key": "requirements.view",
         "label": "View Requirements",
         "module": "requirements",
-        "description": "Allows user to view requirements.",
+        "description": "Allows user to view requirement documents and requirements.",
     },
     {
         "key": "requirements.create",
         "label": "Create Requirements",
         "module": "requirements",
-        "description": "Allows user to create requirements.",
+        "description": "Allows user to create requirement documents and requirements.",
     },
     {
         "key": "requirements.edit",
         "label": "Edit Requirements",
         "module": "requirements",
-        "description": "Allows user to edit requirements.",
+        "description": "Allows user to edit requirement documents and requirements.",
     },
     {
         "key": "requirements.delete",
         "label": "Delete Requirements",
         "module": "requirements",
-        "description": "Allows user to delete requirements.",
+        "description": "Allows user to delete requirement documents and requirements.",
+    },
+    {
+        "key": "requirements.submit_approval",
+        "label": "Submit Requirements for Approval",
+        "module": "requirements",
+        "description": "Allows user to submit requirement documents for approval.",
+    },
+    {
+        "key": "requirements.freeze",
+        "label": "Freeze Requirements",
+        "module": "requirements",
+        "description": "Allows user to freeze approved requirement documents.",
+    },
+
+    # Notifications
+    {
+        "key": "notifications.view",
+        "label": "View Notifications",
+        "module": "notifications",
+        "description": "Allows user to view notifications.",
+    },
+    {
+        "key": "notifications.manage",
+        "label": "Manage Notifications",
+        "module": "notifications",
+        "description": "Allows user to manage notifications.",
     },
 ]
 
 
 def seed_permissions():
+    print("Seeding permissions...")
+
     created_count = 0
+    updated_count = 0
     skipped_count = 0
 
     for permission_data in PERMISSIONS:
@@ -205,7 +248,25 @@ def seed_permissions():
         ).first()
 
         if existing_permission:
-            skipped_count += 1
+            has_changes = False
+
+            if existing_permission.label != permission_data["label"]:
+                existing_permission.label = permission_data["label"]
+                has_changes = True
+
+            if existing_permission.module != permission_data["module"]:
+                existing_permission.module = permission_data["module"]
+                has_changes = True
+
+            if existing_permission.description != permission_data["description"]:
+                existing_permission.description = permission_data["description"]
+                has_changes = True
+
+            if has_changes:
+                updated_count += 1
+            else:
+                skipped_count += 1
+
             continue
 
         permission = Permission(
@@ -214,6 +275,7 @@ def seed_permissions():
             module=permission_data["module"],
             description=permission_data["description"],
         )
+
         db.session.add(permission)
         created_count += 1
 
@@ -221,4 +283,5 @@ def seed_permissions():
 
     print("Permissions seeded successfully.")
     print(f"Created: {created_count}")
+    print(f"Updated: {updated_count}")
     print(f"Skipped: {skipped_count}")

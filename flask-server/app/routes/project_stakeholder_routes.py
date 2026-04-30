@@ -1,15 +1,91 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request, g
 from app.extensions import db
 from app.models.project import Project
 from app.models.user import User
 from app.models.role import Role
 from app.models.user_roles import UserRole
 from app.models.project_stakeholder import ProjectStakeholder
+from app.models.organization_member import OrganizationMember
+from functools import wraps
+from sqlalchemy import or_
+import jwt
+import os
 
 project_stakeholder_bp = Blueprint("project_stakeholder_bp", __name__)
 
 ALLOWED_STAKEHOLDER_STATUSES = {"Active", "Inactive"}
+NON_ASSIGNABLE_ROLE_NAMES = {"System Admin", "Organization Admin"}
+JWT_SECRET_KEY = os.environ.get(
+    "JWT_SECRET_KEY",
+    "xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z"
+)
 
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get("Authorization")
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return jsonify({"message": "Authentication required"}), 401
+
+        token = auth_header.split(" ")[1]
+
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+            g.user_id = payload["user_id"]
+            g.user = User.query.get(g.user_id)
+
+            if not g.user:
+                return jsonify({"message": "User not found"}), 401
+
+            if not g.user.is_active:
+                return jsonify({"message": "User account is deactivated"}), 401
+
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def user_has_project_access(user_id, project_id):
+    user = User.query.get(user_id)
+
+    if user and user.user_type in {"System Admin", "Organization Admin"}:
+        return True
+
+    user_role = UserRole.query.filter_by(
+        user_id=user_id,
+        project_id=project_id
+    ).first()
+
+    return user_role is not None
+
+
+def get_project_or_error(project_id):
+    project = Project.query.get(project_id)
+
+    if not project:
+        return None, jsonify({"message": "Project not found"}), 404
+
+    if not user_has_project_access(g.user_id, project_id):
+        return None, jsonify({"message": "You don't have permission to access this project"}), 403
+
+    return project, None, None
+
+
+def get_assignable_roles_query(project):
+    return Role.query.filter(
+        ~Role.name.in_(NON_ASSIGNABLE_ROLE_NAMES),
+        or_(
+            Role.organization_id.is_(None),
+            Role.organization_id == project.organization_id
+        )
+    )
 
 def parse_int(value):
     try:
@@ -44,8 +120,8 @@ def normalize_status(status):
     return clean_status
 
 
-def get_roles_or_error(role_ids):
-    roles = Role.query.filter(Role.id.in_(role_ids)).all()
+def get_roles_or_error(role_ids, project):
+    roles = get_assignable_roles_query(project).filter(Role.id.in_(role_ids)).all()
     found_role_ids = {role.id for role in roles}
 
     missing_ids = [
@@ -63,7 +139,7 @@ def get_roles_or_error(role_ids):
 
 
 def get_current_user_id():
-    return session.get("user_id")
+    return getattr(g, "user_id", None)
 
 
 def serialize_user(user):
@@ -135,14 +211,59 @@ def serialize_project_stakeholder(stakeholder):
     }
 
 
-@project_stakeholder_bp.route("/project/<int:project_id>/stakeholders", methods=["GET"])
-def get_project_stakeholders(project_id):
-    project = Project.query.get(project_id)
+@project_stakeholder_bp.route("/project/<int:project_id>/stakeholder-roles", methods=["GET"])
+@login_required
+def get_project_stakeholder_roles(project_id):
+    project, error_response, status_code = get_project_or_error(project_id)
 
-    if not project:
-        return jsonify({
-            "message": "Project not found"
-        }), 404
+    if error_response:
+        return error_response, status_code
+
+    roles = (
+        get_assignable_roles_query(project)
+        .order_by(Role.name.asc())
+        .all()
+    )
+
+    return jsonify({
+        "roles": [serialize_role(role) for role in roles]
+    }), 200
+
+
+@project_stakeholder_bp.route("/project/<int:project_id>/stakeholder-users", methods=["GET"])
+@login_required
+def get_project_stakeholder_users(project_id):
+    project, error_response, status_code = get_project_or_error(project_id)
+
+    if error_response:
+        return error_response, status_code
+
+    users = (
+        User.query
+        .join(OrganizationMember, OrganizationMember.user_id == User.id)
+        .filter(
+            OrganizationMember.organization_id == project.organization_id,
+            User.is_active.is_(True)
+        )
+        .order_by(User.first_name.asc(), User.last_name.asc())
+        .all()
+    )
+
+    return jsonify({
+        "users": [
+            serialize_user(user)
+            for user in users
+        ]
+    }), 200
+
+
+@project_stakeholder_bp.route("/project/<int:project_id>/stakeholders", methods=["GET"])
+@login_required
+def get_project_stakeholders(project_id):
+    project, error_response, status_code = get_project_or_error(project_id)
+
+    if error_response:
+        return error_response, status_code
 
     stakeholders = (
         ProjectStakeholder.query
@@ -162,13 +283,12 @@ def get_project_stakeholders(project_id):
 
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders/<int:stakeholder_id>", methods=["GET"])
+@login_required
 def get_project_stakeholder(project_id, stakeholder_id):
-    project = Project.query.get(project_id)
+    project, error_response, status_code = get_project_or_error(project_id)
 
-    if not project:
-        return jsonify({
-            "message": "Project not found"
-        }), 404
+    if error_response:
+        return error_response, status_code
 
     stakeholder = (
         ProjectStakeholder.query
@@ -190,13 +310,12 @@ def get_project_stakeholder(project_id, stakeholder_id):
 
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders", methods=["POST"])
+@login_required
 def create_project_stakeholder(project_id):
-    project = Project.query.get(project_id)
+    project, error_response, status_code = get_project_or_error(project_id)
 
-    if not project:
-        return jsonify({
-            "message": "Project not found"
-        }), 404
+    if error_response:
+        return error_response, status_code
 
     data = request.get_json() or {}
 
@@ -245,7 +364,7 @@ def create_project_stakeholder(project_id):
             "message": "User is already a stakeholder in this project"
         }), 409
 
-    roles, error_response, status_code = get_roles_or_error(role_ids)
+    roles, error_response, status_code = get_roles_or_error(role_ids, project)
 
     if error_response:
         return error_response, status_code
@@ -290,13 +409,12 @@ def create_project_stakeholder(project_id):
 
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders/<int:stakeholder_id>", methods=["PUT"])
+@login_required
 def update_project_stakeholder(project_id, stakeholder_id):
-    project = Project.query.get(project_id)
+    project, error_response, status_code = get_project_or_error(project_id)
 
-    if not project:
-        return jsonify({
-            "message": "Project not found"
-        }), 404
+    if error_response:
+        return error_response, status_code
 
     stakeholder = (
         ProjectStakeholder.query
@@ -332,7 +450,7 @@ def update_project_stakeholder(project_id, stakeholder_id):
                 "message": "At least one role is required"
             }), 400
 
-        roles, error_response, status_code = get_roles_or_error(role_ids)
+        roles, error_response, status_code = get_roles_or_error(role_ids, project)
 
         if error_response:
             return error_response, status_code
@@ -379,13 +497,12 @@ def update_project_stakeholder(project_id, stakeholder_id):
 
 
 @project_stakeholder_bp.route("/project/<int:project_id>/stakeholders/<int:stakeholder_id>", methods=["DELETE"])
+@login_required
 def delete_project_stakeholder(project_id, stakeholder_id):
-    project = Project.query.get(project_id)
+    project, error_response, status_code = get_project_or_error(project_id)
 
-    if not project:
-        return jsonify({
-            "message": "Project not found"
-        }), 404
+    if error_response:
+        return error_response, status_code
 
     stakeholder = (
         ProjectStakeholder.query

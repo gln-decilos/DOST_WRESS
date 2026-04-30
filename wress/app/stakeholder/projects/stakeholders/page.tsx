@@ -51,7 +51,6 @@ type StakeholderForm = {
 }
 
 const BUSINESS_API_BASE_URL = "http://localhost:5000/api/business-analyst"
-const ADMIN_API_BASE_URL = "http://localhost:5000/api/admin"
 
 const emptyForm: StakeholderForm = {
   user_id: "",
@@ -232,6 +231,8 @@ export default function ProjectStakeholdersPage() {
   }
 
   const fetchUsers = async () => {
+    if (!projectId || isNaN(projectId)) return
+
     try {
       const token = getAuthToken()
 
@@ -240,11 +241,14 @@ export default function ProjectStakeholdersPage() {
         return
       }
 
-      const res = await fetch(`${ADMIN_API_BASE_URL}/users`, {
-        method: "GET",
-        headers: createAuthHeaders(),
-        credentials: "include",
-      })
+      const res = await fetch(
+        `${BUSINESS_API_BASE_URL}/project/${projectId}/stakeholder-users`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
 
       const data = await res.json()
 
@@ -265,6 +269,8 @@ export default function ProjectStakeholdersPage() {
   }
 
   const fetchRoles = async () => {
+    if (!projectId || isNaN(projectId)) return
+
     try {
       const token = getAuthToken()
 
@@ -273,11 +279,14 @@ export default function ProjectStakeholdersPage() {
         return
       }
 
-      const res = await fetch(`${ADMIN_API_BASE_URL}/roles/`, {
-        method: "GET",
-        headers: createAuthHeaders(),
-        credentials: "include",
-      })
+      const res = await fetch(
+        `${BUSINESS_API_BASE_URL}/project/${projectId}/stakeholder-roles`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
 
       const data = await res.json()
 
