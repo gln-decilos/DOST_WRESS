@@ -1088,9 +1088,9 @@ export default function ProjectDetailsPageView() {
 
         setMessage(
           data.message ||
-            (!latestVisionScope
-              ? "Initial Vision & Scope version created successfully"
-              : `Vision & Scope saved as version ${computedVersion}`)
+          (!latestVisionScope
+            ? "Initial Vision & Scope version created successfully"
+            : `Vision & Scope saved as version ${computedVersion}`)
         )
       }
 
@@ -1298,10 +1298,9 @@ export default function ProjectDetailsPageView() {
     )
 
   const tabButtonClasses = (tab: string) =>
-    `rounded-lg px-4 py-2 text-sm font-medium ${
-      activeTab === tab
-        ? "bg-primary text-primary-foreground"
-        : "border border-border text-foreground hover:bg-muted"
+    `rounded-lg px-4 py-2 text-sm font-medium ${activeTab === tab
+      ? "bg-primary text-primary-foreground"
+      : "border border-border text-foreground hover:bg-muted"
     }`
 
   if (!projectIdParam || isNaN(Number(projectIdParam))) {
@@ -1919,7 +1918,7 @@ export default function ProjectDetailsPageView() {
                         type="button"
                         onClick={() =>
                           router.push(
-                            `/project/${projectId}/vision-scope/${latestVisionScope.id}`
+                            `/stakeholder/projects/vision-scope?id=${projectId}&documentId=${latestVisionScope.id}`
                           )
                         }
                         className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
@@ -2024,7 +2023,7 @@ export default function ProjectDetailsPageView() {
                                 checked={
                                   previousVisionScopes.length > 0 &&
                                   selectedVisionScopeIds.length ===
-                                    previousVisionScopes.length
+                                  previousVisionScopes.length
                                 }
                                 onChange={toggleSelectAllVisionScopes}
                               />
@@ -2044,7 +2043,7 @@ export default function ProjectDetailsPageView() {
                             className="cursor-pointer border-t border-border hover:bg-muted/30"
                             onClick={() =>
                               router.push(
-                                `/project/${projectId}/vision-scope/${document.id}`
+                                `/stakeholder/projects/vision-scope?id=${projectId}&documentId=${document.id}`
                               )
                             }
                           >
@@ -2086,7 +2085,7 @@ export default function ProjectDetailsPageView() {
                                   type="button"
                                   onClick={() =>
                                     router.push(
-                                      `/project/${projectId}/vision-scope/${document.id}`
+                                      `/stakeholder/projects/vision-scope?id=${projectId}&documentId=${document.id}`
                                     )
                                   }
                                   className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
