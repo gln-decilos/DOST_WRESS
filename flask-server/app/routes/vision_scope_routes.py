@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session
+from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -6,9 +7,52 @@ from app.models.project_document import ProjectDocument
 from app.models.project_document_value import ProjectDocumentValue
 from app.models.document_templates import DocumentTemplate
 from app.models.document_template_field import DocumentTemplateField
-# from app.utils.permissions import require_permission  # COMMENT THIS OUT
+from app.utils.permissions import (
+    get_current_user_id,
+    get_token_user_id,
+    require_permission,
+)
 
 vision_scope_bp = Blueprint("vision_scope", __name__)
+
+
+def parse_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_active_user_id():
+    token_user_id = get_token_user_id()
+
+    if token_user_id:
+        return parse_int(token_user_id)
+
+    current_user_id = get_current_user_id()
+
+    if current_user_id:
+        return parse_int(current_user_id)
+
+    return parse_int(session.get("user_id"))
+
+
+def can_current_user_view_vision_scope_document(document):
+    current_user_id = get_active_user_id()
+
+    if not document:
+        return False
+
+    if document.status != "Draft":
+        return True
+
+    return current_user_id is not None and document.created_by == current_user_id
+
+
+def private_draft_response():
+    return jsonify({
+        "message": "This Vision & Scope document is still a draft and can only be viewed by its creator."
+    }), 403
 
 
 def get_template_field_maps(template):
@@ -41,15 +85,24 @@ def build_document_values_by_key(document, template):
 
     for value in document.values:
         field = field_by_id.get(value.template_field_id)
+
         if not field:
             continue
+
         values_by_key[field.key] = value.value_text or ""
 
     return values_by_key
 
 
-def build_template_values_payload_from_document(source_document, source_template, target_template):
-    source_values_by_key = build_document_values_by_key(source_document, source_template)
+def build_template_values_payload_from_document(
+    source_document,
+    source_template,
+    target_template
+):
+    source_values_by_key = build_document_values_by_key(
+        source_document,
+        source_template
+    )
 
     transferred_values = []
     unmatched_old_fields = []
@@ -86,7 +139,9 @@ def build_template_values_payload_from_document(source_document, source_template
         if old_key not in target_keys:
             unmatched_old_fields.append(old_key)
 
-    transferred_count = sum(1 for item in transferred_values if item["is_transferred"])
+    transferred_count = sum(
+        1 for item in transferred_values if item["is_transferred"]
+    )
 
     return {
         "values": transferred_values,
@@ -97,7 +152,9 @@ def build_template_values_payload_from_document(source_document, source_template
 
 
 def replace_document_values(document_id, values):
-    ProjectDocumentValue.query.filter_by(document_id=document_id).delete(synchronize_session=False)
+    ProjectDocumentValue.query.filter_by(
+        document_id=document_id
+    ).delete(synchronize_session=False)
 
     for item in values:
         template_field_id = item.get("template_field_id")
@@ -107,6 +164,7 @@ def replace_document_values(document_id, values):
             continue
 
         field = DocumentTemplateField.query.get(template_field_id)
+
         if not field:
             continue
 
@@ -136,35 +194,47 @@ def get_vision_scope_document(project_id, document_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents", methods=["GET"])
-# @require_permission("vision_scope.view")  # COMMENT THIS OUT
+@require_permission("vision_scope.view", project_arg="project_id")
 def get_project_vision_scope_documents(project_id):
     template_ids = get_vision_scope_template_ids()
 
     if not template_ids:
         return jsonify({"documents": []}), 200
 
+    current_user_id = get_active_user_id()
+
     documents = (
         ProjectDocument.query
         .filter(
             ProjectDocument.project_id == project_id,
-            ProjectDocument.template_id.in_(template_ids)
+            ProjectDocument.template_id.in_(template_ids),
+            or_(
+                ProjectDocument.status != "Draft",
+                ProjectDocument.created_by == current_user_id,
+            )
         )
         .order_by(ProjectDocument.updated_at.desc(), ProjectDocument.id.desc())
         .all()
     )
 
     return jsonify({
-        "documents": [doc.to_dict(include_values=True) for doc in documents]
+        "documents": [
+            doc.to_dict(include_values=True)
+            for doc in documents
+        ]
     }), 200
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["GET"])
-# @require_permission("vision_scope.view")  # COMMENT THIS OUT
+@require_permission("vision_scope.view", project_arg="project_id")
 def get_project_vision_scope_document(project_id, document_id):
     document = get_vision_scope_document(project_id, document_id)
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
+
+    if not can_current_user_view_vision_scope_document(document):
+        return private_draft_response()
 
     document_template = DocumentTemplate.query.get(document.template_id)
     latest_default_template = DocumentTemplate.query.filter_by(
@@ -175,20 +245,24 @@ def get_project_vision_scope_document(project_id, document_id):
 
     return jsonify({
         "document": document.to_dict(include_values=True),
-        "template": document_template.to_dict(include_sections=True) if document_template else None,
+        "template": (
+            document_template.to_dict(include_sections=True)
+            if document_template else None
+        ),
         "latest_default_template": (
             latest_default_template.to_dict(include_sections=True)
             if latest_default_template else None
         ),
         "has_template_update": bool(
-            latest_default_template and document_template
+            latest_default_template
+            and document_template
             and latest_default_template.id != document_template.id
         ),
     }), 200
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>/template-switch-preview", methods=["GET"])
-# @require_permission("vision_scope.view")  # COMMENT THIS OUT
+@require_permission("vision_scope.view", project_arg="project_id")
 def preview_template_switch(project_id, document_id):
     target_template_id = request.args.get("target_template_id", type=int)
 
@@ -199,6 +273,9 @@ def preview_template_switch(project_id, document_id):
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
+
+    if not can_current_user_view_vision_scope_document(document):
+        return private_draft_response()
 
     source_template = DocumentTemplate.query.filter_by(
         id=document.template_id,
@@ -228,7 +305,7 @@ def preview_template_switch(project_id, document_id):
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents", methods=["POST"])
-# @require_permission("vision_scope.create")  # COMMENT THIS OUT
+@require_permission("vision_scope.create", project_arg="project_id")
 def create_project_vision_scope_document(project_id):
     data = request.get_json() or {}
 
@@ -261,34 +338,49 @@ def create_project_vision_scope_document(project_id):
         )
 
         if existing_draft:
-            return jsonify({"message": "A Vision & Scope draft already exists for this project"}), 400
+            return jsonify({
+                "message": "A Vision & Scope draft already exists for this project"
+            }), 400
 
         version = "Draft"
     else:
         if not version:
-            return jsonify({"message": "Version is required for published documents"}), 400
+            return jsonify({
+                "message": "Version is required for published documents"
+            }), 400
 
-    document = ProjectDocument(
-        project_id=project_id,
-        template_id=template.id,
-        version=version,
-        status=status,
-        created_by=session.get("user_id"),
-    )
-    db.session.add(document)
-    db.session.flush()
+    try:
+        document = ProjectDocument(
+            project_id=project_id,
+            template_id=template.id,
+            version=version,
+            status=status,
+            created_by=get_active_user_id(),
+        )
 
-    replace_document_values(document.id, values)
-    db.session.commit()
+        db.session.add(document)
+        db.session.flush()
 
-    return jsonify({
-        "message": "Vision & Scope document created successfully",
-        "document": document.to_dict(include_values=True)
-    }), 201
+        replace_document_values(document.id, values)
+
+        db.session.commit()
+
+        return jsonify({
+            "message": "Vision & Scope document created successfully",
+            "document": document.to_dict(include_values=True)
+        }), 201
+
+    except Exception as error:
+        db.session.rollback()
+        print("Failed to create Vision & Scope document:", error)
+
+        return jsonify({
+            "message": "Failed to create Vision & Scope document"
+        }), 500
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["PUT"])
-# @require_permission("vision_scope.edit")  # COMMENT THIS OUT
+@require_permission("vision_scope.edit", project_arg="project_id")
 def update_project_vision_scope_document(project_id, document_id):
     data = request.get_json() or {}
 
@@ -301,6 +393,9 @@ def update_project_vision_scope_document(project_id, document_id):
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
+
+    if not can_current_user_view_vision_scope_document(document):
+        return private_draft_response()
 
     if template_id:
         template = DocumentTemplate.query.filter_by(
@@ -328,40 +423,67 @@ def update_project_vision_scope_document(project_id, document_id):
             )
 
             if existing_other_draft:
-                return jsonify({"message": "Another Vision & Scope draft already exists for this project"}), 400
+                return jsonify({
+                    "message": "Another Vision & Scope draft already exists for this project"
+                }), 400
 
             document.status = "Draft"
             document.version = "Draft"
         else:
             document.status = status
+
             if version:
                 document.version = version
     elif version:
         document.version = version
 
-    if values is not None:
-        replace_document_values(document.id, values)
+    try:
+        if values is not None:
+            replace_document_values(document.id, values)
 
-    db.session.commit()
+        db.session.commit()
 
-    return jsonify({
-        "message": "Vision & Scope document updated successfully",
-        "document": document.to_dict(include_values=True)
-    }), 200
+        return jsonify({
+            "message": "Vision & Scope document updated successfully",
+            "document": document.to_dict(include_values=True)
+        }), 200
+
+    except Exception as error:
+        db.session.rollback()
+        print("Failed to update Vision & Scope document:", error)
+
+        return jsonify({
+            "message": "Failed to update Vision & Scope document"
+        }), 500
 
 
 @vision_scope_bp.route("/project/<int:project_id>/vision-scope/documents/<int:document_id>", methods=["DELETE"])
-# @require_permission("vision_scope.delete")  # COMMENT THIS OUT
+@require_permission("vision_scope.delete", project_arg="project_id")
 def delete_project_vision_scope_document(project_id, document_id):
     document = get_vision_scope_document(project_id, document_id)
 
     if not document:
         return jsonify({"message": "Vision & Scope document not found"}), 404
 
-    ProjectDocumentValue.query.filter_by(document_id=document.id).delete(synchronize_session=False)
-    db.session.delete(document)
-    db.session.commit()
+    if not can_current_user_view_vision_scope_document(document):
+        return private_draft_response()
 
-    return jsonify({
-         "message": "Vision & Scope document deleted successfully"
-    }), 200
+    try:
+        ProjectDocumentValue.query.filter_by(
+            document_id=document.id
+        ).delete(synchronize_session=False)
+
+        db.session.delete(document)
+        db.session.commit()
+
+        return jsonify({
+            "message": "Vision & Scope document deleted successfully"
+        }), 200
+
+    except Exception as error:
+        db.session.rollback()
+        print("Failed to delete Vision & Scope document:", error)
+
+        return jsonify({
+            "message": "Failed to delete Vision & Scope document"
+        }), 500

@@ -29,7 +29,6 @@ def create_app():
     app.config["JWT_HEADER_NAME"] = "Authorization"
     app.config["JWT_HEADER_TYPE"] = "Bearer"
 
-    # CORS - Updated to include all necessary routes
     CORS(
         app,
         supports_credentials=True,
@@ -54,17 +53,19 @@ def create_app():
 
     jwt = JWTManager()
     jwt.init_app(app)
-    
+
     # MODELS
     from app.models.organization import Organization
     from app.models.organization_member import OrganizationMember
+
     from app.models.project import Project
+    from app.models.project_stakeholder import ProjectStakeholder
+
     from app.models.user import User
     from app.models.role import Role
     from app.models.permission import Permission
     from app.models.user_roles import UserRole
     from app.models.role_permissions import RolePermission
-    from app.models.project_stakeholder import ProjectStakeholder
 
     from app.models.document_templates import DocumentTemplate
     from app.models.document_template_section import DocumentTemplateSection
@@ -75,6 +76,9 @@ def create_app():
 
     from app.models.requirement_item import RequirementItem
     from app.models.requirement_item_value import RequirementItemValue
+    from app.models.requirement_approval import RequirementApproval
+    from app.models.requirement_comment import RequirementComment
+
     from app.models.notification import Notification
 
     # ROUTES
@@ -91,7 +95,7 @@ def create_app():
     from app.routes.vision_scope_routes import vision_scope_bp
     from app.routes.requirements_routes import requirements_bp
     from app.routes.project_stakeholder_routes import project_stakeholder_bp
-    from app.routes.orgadmin_project_routes import orgadmin_project_bp 
+    from app.routes.orgadmin_project_routes import orgadmin_project_bp
 
     from app.routes.admin_template_routes import admin_template_bp
     from app.routes.admin_template_section_routes import admin_template_section_bp
@@ -104,7 +108,6 @@ def create_app():
 
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(organization_bp, url_prefix="/api/admin/organizations")
-    # FIXED: Register user_bp with /api/users prefix (not /api/admin/users)
     app.register_blueprint(user_bp, url_prefix="/api/users")
     app.register_blueprint(role_bp, url_prefix="/api/admin/roles")
     app.register_blueprint(permission_bp, url_prefix="/api/admin/permissions")
@@ -116,9 +119,8 @@ def create_app():
     app.register_blueprint(requirements_bp, url_prefix="/api/business-analyst")
     app.register_blueprint(project_stakeholder_bp, url_prefix="/api/business-analyst")
 
-    # FIXED: correct prefix
     app.register_blueprint(notification_bp, url_prefix="/api")
-    app.register_blueprint(orgadmin_project_bp, url_prefix="/api/orgadmin/projects") 
+    app.register_blueprint(orgadmin_project_bp, url_prefix="/api/orgadmin/projects")
 
     app.register_blueprint(admin_template_bp)
     app.register_blueprint(admin_template_section_bp)

@@ -2,7 +2,7 @@ from functools import wraps
 import os
 
 import jwt
-from flask import g, jsonify, request, session
+from flask import current_app, g, jsonify, request, session
 
 from app.extensions import db
 from app.models.permission import Permission
@@ -11,8 +11,7 @@ from app.models.user import User
 from app.models.user_roles import UserRole
 
 
-JWT_SECRET_KEY = os.environ.get(
-    "JWT_SECRET_KEY",
+DEFAULT_JWT_SECRET_KEY = (
     "xK9mP2nQ5rS8tU1vW3yZ4aB6cD7eF0gH2jK5lN7pR9sT2uV4wX6yZ8aB1cD3eF5gH7jK9lN1pR3sT5uV7wX9z"
 )
 
@@ -26,6 +25,34 @@ def parse_int(value):
         return None
 
 
+def get_jwt_secret_candidates():
+    candidates = []
+
+    try:
+        app_secret = current_app.config.get("JWT_SECRET_KEY")
+        if app_secret:
+            candidates.append(app_secret)
+    except RuntimeError:
+        pass
+
+    env_secret = os.environ.get("JWT_SECRET_KEY")
+    if env_secret:
+        candidates.append(env_secret)
+
+    candidates.append("dev-jwt-secret-key")
+    candidates.append(DEFAULT_JWT_SECRET_KEY)
+
+    unique_candidates = []
+    seen = set()
+
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            unique_candidates.append(candidate)
+            seen.add(candidate)
+
+    return unique_candidates
+
+
 def get_token_user_id():
     auth_header = request.headers.get("Authorization", "")
 
@@ -37,43 +64,89 @@ def get_token_user_id():
     if not token:
         return None
 
-    try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        return payload.get("user_id")
-    except jwt.ExpiredSignatureError:
-        return None
-    except jwt.InvalidTokenError:
-        return None
+    for secret_key in get_jwt_secret_candidates():
+        try:
+            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+
+            user_id = (
+                payload.get("user_id")
+                or payload.get("id")
+                or payload.get("sub")
+            )
+
+            return parse_int(user_id)
+
+        except jwt.ExpiredSignatureError:
+            return None
+        except jwt.InvalidTokenError:
+            continue
+
+    return None
 
 
 def get_current_user_id():
-    if getattr(g, "user_id", None):
-        return g.user_id
+    token_user_id = get_token_user_id()
 
-    session_user_id = session.get("user_id")
+    if token_user_id:
+        user = User.query.get(token_user_id)
+
+        if user and user.is_active:
+            g.user_id = user.id
+            g.user = user
+            session["user_id"] = user.id
+            return user.id
+
+        return None
+
+    g_user_id = parse_int(getattr(g, "user_id", None))
+
+    if g_user_id:
+        user = User.query.get(g_user_id)
+
+        if user and user.is_active:
+            g.user_id = user.id
+            g.user = user
+            session["user_id"] = user.id
+            return user.id
+
+        return None
+
+    session_user_id = parse_int(session.get("user_id"))
 
     if session_user_id:
-        return session_user_id
+        user = User.query.get(session_user_id)
 
-    return get_token_user_id()
+        if user and user.is_active:
+            g.user_id = user.id
+            g.user = user
+            return user.id
+
+        session.pop("user_id", None)
+        return None
+
+    return None
 
 
 def get_current_user():
-    if getattr(g, "user", None):
-        return g.user
-
     user_id = get_current_user_id()
 
     if not user_id:
         return None
 
+    existing_user = getattr(g, "user", None)
+
+    if existing_user and existing_user.id == user_id:
+        return existing_user
+
     user = User.query.get(user_id)
 
-    if user:
+    if user and user.is_active:
         g.user_id = user.id
         g.user = user
+        session["user_id"] = user.id
+        return user
 
-    return user
+    return None
 
 
 def is_admin_user(user):
@@ -86,16 +159,25 @@ def get_request_project_id(kwargs=None, project_arg="project_id"):
     project_id = kwargs.get(project_arg)
 
     if project_id is None:
+        project_id = kwargs.get("project_id")
+
+    if project_id is None:
         project_id = request.args.get(project_arg)
 
     if project_id is None:
+        project_id = request.args.get("project_id")
+
+    if project_id is None:
         data = request.get_json(silent=True) or {}
-        project_id = data.get(project_arg)
+        project_id = data.get(project_arg) or data.get("project_id")
 
     return parse_int(project_id)
 
 
 def user_has_project_access(user_id, project_id):
+    user_id = parse_int(user_id)
+    project_id = parse_int(project_id)
+
     user = User.query.get(user_id)
 
     if is_admin_user(user):
@@ -111,6 +193,9 @@ def user_has_project_access(user_id, project_id):
 
 
 def get_user_permission_keys(user_id, project_id=None):
+    user_id = parse_int(user_id)
+    project_id = parse_int(project_id)
+
     user = User.query.get(user_id)
 
     if not user or not user.is_active:
@@ -138,6 +223,9 @@ def get_user_permission_keys(user_id, project_id=None):
 
 
 def user_has_permission(user_id, permission_key, project_id=None):
+    user_id = parse_int(user_id)
+    project_id = parse_int(project_id)
+
     user = User.query.get(user_id)
 
     if not user or not user.is_active:
@@ -176,9 +264,15 @@ def require_permission(permission_key, project_arg="project_id"):
             if not user.is_active:
                 return jsonify({"message": "User account is inactive"}), 403
 
-            project_id = get_request_project_id(kwargs, project_arg=project_arg)
+            project_id = get_request_project_id(
+                kwargs,
+                project_arg=project_arg
+            )
 
-            if project_id is not None and not user_has_project_access(user.id, project_id):
+            if project_id is not None and not user_has_project_access(
+                user.id,
+                project_id
+            ):
                 return jsonify({
                     "message": "You don't have permission to access this project"
                 }), 403

@@ -38,8 +38,15 @@ type SignedInUser = {
   organizations: UserOrganization[]
 }
 
+type ProjectPermissionState = {
+  canView: boolean
+  canUpdate: boolean
+  canDelete: boolean
+}
+
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const AUTH_API_BASE_URL = "http://localhost:5000/api/auth"
+const ACCESS_API_BASE_URL = "http://localhost:5000/api/access"
 const ITEMS_PER_PAGE = 6
 
 const emptyProject: ProjectForm = {
@@ -49,23 +56,31 @@ const emptyProject: ProjectForm = {
   end_date: "",
 }
 
-// Helper functions for token management - UPDATED to use 'token' key
 const getAuthToken = () => {
-  return localStorage.getItem('token');  // Changed to match sign-in page
-};
+  if (typeof window === "undefined") return null
+  return localStorage.getItem("token")
+}
 
 const removeAuthToken = () => {
-  localStorage.removeItem('token');  // Changed to match sign-in page
-  localStorage.removeItem('user');
-};
+  if (typeof window === "undefined") return
+
+  localStorage.removeItem("token")
+  localStorage.removeItem("user")
+}
 
 const createAuthHeaders = () => {
-  const token = getAuthToken();
-  return {
-    'Content-Type': 'application/json',
-    ...(token && { 'Authorization': `Bearer ${token}` })
-  };
-};
+  const token = getAuthToken()
+
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  return headers
+}
 
 function getStatusClasses(status: string) {
   switch (status) {
@@ -90,41 +105,134 @@ export default function ProjectsPageView() {
   const [fetching, setFetching] = useState(true)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
-  const [activeView, setActiveView] = useState<"projects" | "archived">("projects")
+  const [activeView, setActiveView] = useState<"projects" | "archived">(
+    "projects"
+  )
   const [isAuthChecking, setIsAuthChecking] = useState(true)
+
+  const [permissionLoading, setPermissionLoading] = useState(true)
+  const [canCreateProject, setCanCreateProject] = useState(false)
+  const [projectPermissions, setProjectPermissions] = useState<
+    Record<number, ProjectPermissionState>
+  >({})
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false)
 
   const [projectForm, setProjectForm] = useState<ProjectForm>(emptyProject)
-  const [userOrganization, setUserOrganization] = useState<UserOrganization | null>(null)
+  const [userOrganization, setUserOrganization] =
+    useState<UserOrganization | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+
+  const checkPermission = async (
+    permission: string,
+    projectId?: number | null
+  ) => {
+    try {
+      const token = getAuthToken()
+
+      if (!token) {
+        router.push("/signin")
+        return false
+      }
+
+      const body =
+        projectId && !Number.isNaN(projectId)
+          ? {
+              permission,
+              project_id: projectId,
+            }
+          : {
+              permission,
+            }
+
+      const res = await fetch(`${ACCESS_API_BASE_URL}/check`, {
+        method: "POST",
+        headers: createAuthHeaders(),
+        credentials: "include",
+        body: JSON.stringify(body),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) return false
+
+      return Boolean(data.allowed)
+    } catch (error) {
+      console.error(`Failed to check permission: ${permission}`, error)
+      return false
+    }
+  }
+
+  const checkCreateProjectPermission = async () => {
+    const allowed = await checkPermission("project.create")
+    setCanCreateProject(allowed)
+  }
+
+  const checkProjectActionPermissions = async (projectList: Project[]) => {
+    try {
+      setPermissionLoading(true)
+
+      const permissionEntries = await Promise.all(
+        projectList.map(async (project) => {
+          const [canView, canUpdate, canDelete] = await Promise.all([
+            checkPermission("project.view", project.id),
+            checkPermission("project.edit", project.id),
+            checkPermission("project.delete", project.id),
+          ])
+
+          return [
+            project.id,
+            {
+              canView,
+              canUpdate,
+              canDelete,
+            },
+          ] as const
+        })
+      )
+
+      setProjectPermissions(Object.fromEntries(permissionEntries))
+    } finally {
+      setPermissionLoading(false)
+    }
+  }
+
+  const getProjectPermissions = (projectId: number) => {
+    return (
+      projectPermissions[projectId] || {
+        canView: false,
+        canUpdate: false,
+        canDelete: false,
+      }
+    )
+  }
 
   const fetchCurrentUser = async () => {
     try {
-      const token = getAuthToken();
+      const token = getAuthToken()
 
       if (!token) {
-        console.log("No auth token found, redirecting to login");
-        router.push('/signin');  // Changed from '/login' to '/signin' to match your route
-        return;
+        router.push("/signin")
+        return
       }
 
       const res = await fetch(`${AUTH_API_BASE_URL}/me`, {
         method: "GET",
         headers: createAuthHeaders(),
+        credentials: "include",
       })
 
       const data = await res.json()
 
       if (!res.ok) {
         if (res.status === 401) {
-          console.log("Token invalid or expired, redirecting to login");
-          removeAuthToken();
-          router.push('/signin');  // Changed from '/login' to '/signin'
-          return;
+          removeAuthToken()
+          router.push("/signin")
+          return
         }
+
         setMessage(data.error || data.message || "Failed to fetch signed-in user.")
         return
       }
@@ -148,31 +256,36 @@ export default function ProjectsPageView() {
       setFetching(true)
       setMessage("")
 
-      const token = getAuthToken();
+      const token = getAuthToken()
 
       if (!token) {
-        router.push('/signin');  // Changed from '/login' to '/signin'
-        return;
+        router.push("/signin")
+        return
       }
 
       const res = await fetch(`${API_BASE_URL}/projects`, {
         method: "GET",
         headers: createAuthHeaders(),
+        credentials: "include",
       })
 
       const data = await res.json()
 
       if (!res.ok) {
         if (res.status === 401) {
-          removeAuthToken();
-          router.push('/signin');  // Changed from '/login' to '/signin'
-          return;
+          removeAuthToken()
+          router.push("/signin")
+          return
         }
+
         setMessage(data.message || "Failed to fetch projects")
         return
       }
 
-      setProjects(data)
+      const projectList = Array.isArray(data) ? data : []
+
+      setProjects(projectList)
+      await checkProjectActionPermissions(projectList)
     } catch (error) {
       console.error("Failed to fetch projects:", error)
       setMessage("Failed to fetch projects")
@@ -183,32 +296,65 @@ export default function ProjectsPageView() {
 
   useEffect(() => {
     const initialize = async () => {
-      setIsAuthChecking(true);
-      await fetchCurrentUser();
-      await fetchProjects();
-      setIsAuthChecking(false);
-    };
+      setIsAuthChecking(true)
+      setPermissionLoading(true)
 
-    initialize();
+      await fetchCurrentUser()
+      await checkCreateProjectPermission()
+      await fetchProjects()
+
+      setIsAuthChecking(false)
+    }
+
+    initialize()
   }, [])
+
+  const visibleProjects = useMemo(() => {
+    if (permissionLoading) return []
+
+    return projects.filter((project) => {
+      const permissions = getProjectPermissions(project.id)
+      return permissions.canView
+    })
+  }, [projects, projectPermissions, permissionLoading])
 
   const filteredProjects = useMemo(() => {
     if (activeView === "projects") {
-      return projects.filter((project) => project.status !== "Archived")
+      return visibleProjects.filter((project) => project.status !== "Archived")
     }
 
-    return projects.filter((project) => project.status === "Archived")
-  }, [projects, activeView])
+    return visibleProjects.filter((project) => project.status === "Archived")
+  }, [visibleProjects, activeView])
 
-  const totalPages = Math.max(1, Math.ceil(filteredProjects.length / ITEMS_PER_PAGE))
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredProjects.length / ITEMS_PER_PAGE)
+  )
 
   const paginatedProjects = useMemo(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
     const endIndex = startIndex + ITEMS_PER_PAGE
+
     return filteredProjects.slice(startIndex, endIndex)
   }, [filteredProjects, currentPage])
 
+  const openProjectDetails = (project: Project) => {
+    const permissions = getProjectPermissions(project.id)
+
+    if (!permissions.canView) {
+      setMessage("You don't have permission to view this project.")
+      return
+    }
+
+    router.push(`/stakeholder/projects/project-details?id=${project.id}`)
+  }
+
   const openCreateModal = () => {
+    if (!canCreateProject) {
+      setMessage("You don't have permission to create projects.")
+      return
+    }
+
     setProjectForm(emptyProject)
     setMessage("")
     setIsCreateModalOpen(true)
@@ -221,6 +367,13 @@ export default function ProjectsPageView() {
   }
 
   const openDeleteModal = (project: Project) => {
+    const permissions = getProjectPermissions(project.id)
+
+    if (!permissions.canDelete) {
+      setMessage("You don't have permission to delete this project.")
+      return
+    }
+
     setSelectedProject(project)
     setMessage("")
     setIsDeleteModalOpen(true)
@@ -232,6 +385,17 @@ export default function ProjectsPageView() {
   }
 
   const openArchiveModal = (project: Project) => {
+    const permissions = getProjectPermissions(project.id)
+
+    if (!permissions.canUpdate) {
+      setMessage(
+        project.status === "Archived"
+          ? "You don't have permission to unarchive this project."
+          : "You don't have permission to archive this project."
+      )
+      return
+    }
+
     setSelectedProject(project)
     setMessage("")
     setIsArchiveModalOpen(true)
@@ -246,6 +410,7 @@ export default function ProjectsPageView() {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target
+
     setProjectForm((prev) => ({
       ...prev,
       [name]: value,
@@ -254,6 +419,12 @@ export default function ProjectsPageView() {
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!canCreateProject) {
+      setMessage("You don't have permission to create projects.")
+      return
+    }
+
     setLoading(true)
     setMessage("")
 
@@ -263,11 +434,12 @@ export default function ProjectsPageView() {
       return
     }
 
-    const token = getAuthToken();
+    const token = getAuthToken()
+
     if (!token) {
       setMessage("Authentication required. Please login again.")
       setLoading(false)
-      router.push('/signin');
+      router.push("/signin")
       return
     }
 
@@ -275,6 +447,7 @@ export default function ProjectsPageView() {
       const res = await fetch(`${API_BASE_URL}/projects`, {
         method: "POST",
         headers: createAuthHeaders(),
+        credentials: "include",
         body: JSON.stringify({
           name: projectForm.name,
           description: projectForm.description,
@@ -289,10 +462,11 @@ export default function ProjectsPageView() {
 
       if (!res.ok) {
         if (res.status === 401) {
-          removeAuthToken();
-          router.push('/signin');
-          return;
+          removeAuthToken()
+          router.push("/signin")
+          return
         }
+
         setMessage(data.message || "Failed to create project")
         return
       }
@@ -302,6 +476,7 @@ export default function ProjectsPageView() {
       setIsCreateModalOpen(false)
       setCurrentPage(1)
       setActiveView("projects")
+
       await fetchProjects()
     } catch (error) {
       console.error("Failed to create project:", error)
@@ -313,6 +488,17 @@ export default function ProjectsPageView() {
 
   const confirmArchiveToggle = async () => {
     if (!selectedProject) return
+
+    const permissions = getProjectPermissions(selectedProject.id)
+
+    if (!permissions.canUpdate) {
+      setMessage(
+        selectedProject.status === "Archived"
+          ? "You don't have permission to unarchive this project."
+          : "You don't have permission to archive this project."
+      )
+      return
+    }
 
     try {
       setLoading(true)
@@ -326,34 +512,37 @@ export default function ProjectsPageView() {
       const res = await fetch(endpoint, {
         method: "PATCH",
         headers: createAuthHeaders(),
+        credentials: "include",
       })
 
       const data = await res.json()
 
       if (!res.ok) {
         if (res.status === 401) {
-          removeAuthToken();
-          router.push('/signin');
-          return;
+          removeAuthToken()
+          router.push("/signin")
+          return
         }
+
         setMessage(
           data.message ||
-          (isArchived
-            ? "Failed to unarchive project"
-            : "Failed to archive project")
+            (isArchived
+              ? "Failed to unarchive project"
+              : "Failed to archive project")
         )
         return
       }
 
       setMessage(
         data.message ||
-        (isArchived
-          ? "Project unarchived successfully"
-          : "Project archived successfully")
+          (isArchived
+            ? "Project unarchived successfully"
+            : "Project archived successfully")
       )
 
       setCurrentPage(1)
       setActiveView(isArchived ? "projects" : "archived")
+
       await fetchProjects()
       closeArchiveModal()
     } catch (error) {
@@ -367,6 +556,13 @@ export default function ProjectsPageView() {
   const confirmDeleteProject = async () => {
     if (!selectedProject?.id) return
 
+    const permissions = getProjectPermissions(selectedProject.id)
+
+    if (!permissions.canDelete) {
+      setMessage("You don't have permission to delete this project.")
+      return
+    }
+
     try {
       setLoading(true)
       setMessage("")
@@ -374,16 +570,18 @@ export default function ProjectsPageView() {
       const res = await fetch(`${API_BASE_URL}/project/${selectedProject.id}`, {
         method: "DELETE",
         headers: createAuthHeaders(),
+        credentials: "include",
       })
 
       const data = await res.json()
 
       if (!res.ok) {
         if (res.status === 401) {
-          removeAuthToken();
-          router.push('/signin');
-          return;
+          removeAuthToken()
+          router.push("/signin")
+          return
         }
+
         setMessage(data.message || "Failed to delete project")
         return
       }
@@ -393,10 +591,14 @@ export default function ProjectsPageView() {
       const updatedProjects = projects.filter(
         (project) => project.id !== selectedProject.id
       )
+      const updatedVisibleProjects = updatedProjects.filter((project) => {
+        const permissions = getProjectPermissions(project.id)
+        return permissions.canView
+      })
       const updatedFilteredProjects =
         activeView === "projects"
-          ? updatedProjects.filter((project) => project.status !== "Archived")
-          : updatedProjects.filter((project) => project.status === "Archived")
+          ? updatedVisibleProjects.filter((project) => project.status !== "Archived")
+          : updatedVisibleProjects.filter((project) => project.status === "Archived")
 
       const newTotalPages = Math.max(
         1,
@@ -417,16 +619,15 @@ export default function ProjectsPageView() {
     }
   }
 
-  // Show loading while checking authentication
   if (isAuthChecking) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex min-h-[400px] items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <div className="mx-auto h-12 w-12 animate-spin rounded-full border-b-2 border-primary"></div>
           <p className="mt-4 text-muted-foreground">Loading...</p>
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -456,12 +657,14 @@ export default function ProjectsPageView() {
                 Archived Projects
               </button>
 
-              <button
-                onClick={openCreateModal}
-                className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-              >
-                Create Project
-              </button>
+              {!permissionLoading && canCreateProject && (
+                <button
+                  onClick={openCreateModal}
+                  className="shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+                >
+                  Create Project
+                </button>
+              )}
             </>
           ) : (
             <button
@@ -483,9 +686,9 @@ export default function ProjectsPageView() {
         </div>
       )}
 
-      {fetching ? (
+      {fetching || permissionLoading ? (
         <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
-          Loading projects...
+          {fetching ? "Loading projects..." : "Checking project permissions..."}
         </div>
       ) : filteredProjects.length === 0 ? (
         <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
@@ -496,78 +699,96 @@ export default function ProjectsPageView() {
       ) : (
         <>
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {paginatedProjects.map((project) => (
-              <div
-                key={project.id}
-                className="rounded-2xl bg-background p-5 shadow-sm ring-1 ring-border transition hover:shadow-md"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <h2 className="text-lg font-semibold text-foreground">
-                    {project.name}
-                  </h2>
+            {paginatedProjects.map((project) => {
+              const permissions = getProjectPermissions(project.id)
+              const canShowViewButton = permissions.canView
+              const canShowArchiveButton = permissions.canUpdate
+              const canShowDeleteButton = permissions.canDelete
+              const canShowActions =
+                canShowViewButton || canShowArchiveButton || canShowDeleteButton
 
-                  <span
-                    className={`inline-flex shrink-0 rounded-full px-3 py-1 text-xs font-medium ring-1 ${getStatusClasses(project.status)}`}
-                  >
-                    {project.status}
-                  </span>
-                </div>
+              return (
+                <div
+                  key={project.id}
+                  className="rounded-2xl bg-background p-5 shadow-sm ring-1 ring-border transition hover:shadow-md"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <h2 className="text-lg font-semibold text-foreground">
+                      {project.name}
+                    </h2>
 
-                <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                  {project.description || "No description provided."}
-                </p>
+                    <span
+                      className={`inline-flex shrink-0 rounded-full px-3 py-1 text-xs font-medium ring-1 ${getStatusClasses(
+                        project.status
+                      )}`}
+                    >
+                      {project.status}
+                    </span>
+                  </div>
 
-                <div className="mt-4 space-y-1 text-sm text-muted-foreground">
-                  <p>
-                    <span className="font-medium text-foreground">Start:</span>{" "}
-                    {project.start_date || "-"}
+                  <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                    {project.description || "No description provided."}
                   </p>
-                  <p>
-                    <span className="font-medium text-foreground">End:</span>{" "}
-                    {project.end_date || "-"}
-                  </p>
+
+                  <div className="mt-4 space-y-1 text-sm text-muted-foreground">
+                    <p>
+                      <span className="font-medium text-foreground">Start:</span>{" "}
+                      {project.start_date || "-"}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">End:</span>{" "}
+                      {project.end_date || "-"}
+                    </p>
+                  </div>
+
+                  {canShowActions && (
+                    <div className="mt-5 flex items-center justify-end gap-2">
+                      {canShowViewButton && (
+                        <button
+                          onClick={() => openProjectDetails(project)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border text-foreground hover:bg-muted"
+                          title="View Project"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      )}
+
+                      {canShowArchiveButton && (
+                        <button
+                          onClick={() => openArchiveModal(project)}
+                          className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border ${
+                            project.status === "Archived"
+                              ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                              : "border-border text-foreground hover:bg-muted"
+                          }`}
+                          title={
+                            project.status === "Archived"
+                              ? "Unarchive Project"
+                              : "Archive Project"
+                          }
+                        >
+                          {project.status === "Archived" ? (
+                            <RotateCcw className="h-4 w-4" />
+                          ) : (
+                            <Archive className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
+
+                      {canShowDeleteButton && (
+                        <button
+                          onClick={() => openDeleteModal(project)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                          title="Delete Project"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-
-                <div className="mt-5 flex items-center justify-end gap-2">
-                  <button
-                    onClick={() =>
-                      router.push(`/stakeholder/projects/project-details?id=${project.id}`)
-                    }
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border text-foreground hover:bg-muted"
-                    title="View Project"
-                  >
-                    <Eye className="h-4 w-4" />
-                  </button>
-
-                  <button
-                    onClick={() => openArchiveModal(project)}
-                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border ${project.status === "Archived"
-                      ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-                      : "border-border text-foreground hover:bg-muted"
-                      }`}
-                    title={
-                      project.status === "Archived"
-                        ? "Unarchive Project"
-                        : "Archive Project"
-                    }
-                  >
-                    {project.status === "Archived" ? (
-                      <RotateCcw className="h-4 w-4" />
-                    ) : (
-                      <Archive className="h-4 w-4" />
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => openDeleteModal(project)}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
-                    title="Delete Project"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <div className="mt-6 flex flex-col gap-4 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -592,10 +813,11 @@ export default function ProjectsPageView() {
                   <button
                     key={page}
                     onClick={() => setCurrentPage(page)}
-                    className={`rounded-lg px-3 py-1.5 text-sm ${currentPage === page
-                      ? "bg-primary text-primary-foreground"
-                      : "border border-border text-foreground hover:bg-muted"
-                      }`}
+                    className={`rounded-lg px-3 py-1.5 text-sm ${
+                      currentPage === page
+                        ? "bg-primary text-primary-foreground"
+                        : "border border-border text-foreground hover:bg-muted"
+                    }`}
                   >
                     {page}
                   </button>
@@ -614,7 +836,7 @@ export default function ProjectsPageView() {
         </>
       )}
 
-      {isCreateModalOpen && (
+      {isCreateModalOpen && canCreateProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <div className="mb-4 flex items-center justify-between">
@@ -724,104 +946,109 @@ export default function ProjectsPageView() {
         </div>
       )}
 
-      {isArchiveModalOpen && selectedProject && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">
-              {selectedProject.status === "Archived"
-                ? "Unarchive Project"
-                : "Archive Project"}
-            </h3>
+      {isArchiveModalOpen &&
+        selectedProject &&
+        getProjectPermissions(selectedProject.id).canUpdate && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+              <h3 className="text-lg font-semibold text-foreground">
+                {selectedProject.status === "Archived"
+                  ? "Unarchive Project"
+                  : "Archive Project"}
+              </h3>
 
-            <p className="mt-3 text-sm text-muted-foreground">
-              {selectedProject.status === "Archived" ? (
-                <>
-                  Are you sure you want to unarchive{" "}
-                  <span className="font-semibold text-foreground">
-                    {selectedProject.name}
-                  </span>
-                  ?
-                </>
-              ) : (
-                <>
-                  Are you sure you want to archive{" "}
-                  <span className="font-semibold text-foreground">
-                    {selectedProject.name}
-                  </span>
-                  ?
-                </>
-              )}
-            </p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {selectedProject.status === "Archived" ? (
+                  <>
+                    Are you sure you want to unarchive{" "}
+                    <span className="font-semibold text-foreground">
+                      {selectedProject.name}
+                    </span>
+                    ?
+                  </>
+                ) : (
+                  <>
+                    Are you sure you want to archive{" "}
+                    <span className="font-semibold text-foreground">
+                      {selectedProject.name}
+                    </span>
+                    ?
+                  </>
+                )}
+              </p>
 
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeArchiveModal}
-                disabled={loading}
-                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
-              >
-                Cancel
-              </button>
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeArchiveModal}
+                  disabled={loading}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
+                >
+                  Cancel
+                </button>
 
-              <button
-                type="button"
-                onClick={confirmArchiveToggle}
-                disabled={loading}
-                className={`rounded-lg px-4 py-2 text-white disabled:opacity-60 ${selectedProject.status === "Archived"
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-amber-600 hover:bg-amber-700"
+                <button
+                  type="button"
+                  onClick={confirmArchiveToggle}
+                  disabled={loading}
+                  className={`rounded-lg px-4 py-2 text-white disabled:opacity-60 ${
+                    selectedProject.status === "Archived"
+                      ? "bg-emerald-600 hover:bg-emerald-700"
+                      : "bg-amber-600 hover:bg-amber-700"
                   }`}
-              >
-                {loading
-                  ? selectedProject.status === "Archived"
-                    ? "Restoring..."
-                    : "Archiving..."
-                  : selectedProject.status === "Archived"
-                    ? "Confirm Restore"
-                    : "Confirm Archive"}
-              </button>
+                >
+                  {loading
+                    ? selectedProject.status === "Archived"
+                      ? "Restoring..."
+                      : "Archiving..."
+                    : selectedProject.status === "Archived"
+                      ? "Confirm Restore"
+                      : "Confirm Archive"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {isDeleteModalOpen && selectedProject && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
-            <h3 className="text-lg font-semibold text-foreground">
-              Delete Project
-            </h3>
+      {isDeleteModalOpen &&
+        selectedProject &&
+        getProjectPermissions(selectedProject.id).canDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+              <h3 className="text-lg font-semibold text-foreground">
+                Delete Project
+              </h3>
 
-            <p className="mt-3 text-sm text-muted-foreground">
-              Are you sure you want to delete{" "}
-              <span className="font-semibold text-foreground">
-                {selectedProject.name}
-              </span>
-              ? This action cannot be undone.
-            </p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                Are you sure you want to delete{" "}
+                <span className="font-semibold text-foreground">
+                  {selectedProject.name}
+                </span>
+                ? This action cannot be undone.
+              </p>
 
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeDeleteModal}
-                disabled={loading}
-                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
-              >
-                Cancel
-              </button>
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeDeleteModal}
+                  disabled={loading}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted disabled:opacity-60"
+                >
+                  Cancel
+                </button>
 
-              <button
-                type="button"
-                onClick={confirmDeleteProject}
-                disabled={loading}
-                className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
-              >
-                {loading ? "Deleting..." : "Confirm Delete"}
-              </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteProject}
+                  disabled={loading}
+                  className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
+                >
+                  {loading ? "Deleting..." : "Confirm Delete"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
     </section>
   )
 }

@@ -213,10 +213,28 @@ PERMISSIONS = [
         "description": "Allows user to submit requirement documents for approval.",
     },
     {
+        "key": "requirements.approve",
+        "label": "Approve Requirements",
+        "module": "requirements",
+        "description": "Allows user to approve requirement documents assigned to them for review.",
+    },
+    {
+        "key": "requirements.reject",
+        "label": "Reject Requirements",
+        "module": "requirements",
+        "description": "Allows user to reject requirement documents assigned to them for review.",
+    },
+    {
         "key": "requirements.freeze",
         "label": "Freeze Requirements",
         "module": "requirements",
         "description": "Allows user to freeze approved requirement documents.",
+    },
+    {
+        "key": "requirements.comment",
+        "label": "Comment on Requirements",
+        "module": "requirements",
+        "description": "Allows user to add comments on individual requirements.",
     },
 
     # Notifications

@@ -48,7 +48,10 @@ ROLE_PERMISSION_MAP = {
         "requirements.edit",
         "requirements.delete",
         "requirements.submit_approval",
+        "requirements.approve",
+        "requirements.reject",
         "requirements.freeze",
+        "requirements.comment",
 
         "notifications.view",
         "notifications.manage",
@@ -73,7 +76,10 @@ ROLE_PERMISSION_MAP = {
         "requirements.edit",
         "requirements.delete",
         "requirements.submit_approval",
+        "requirements.approve",
+        "requirements.reject",
         "requirements.freeze",
+        "requirements.comment",
 
         "notifications.view",
     ],
@@ -96,6 +102,7 @@ ROLE_PERMISSION_MAP = {
         "requirements.delete",
         "requirements.submit_approval",
         "requirements.freeze",
+        "requirements.comment",
 
         "notifications.view",
     ],
@@ -110,6 +117,9 @@ ROLE_PERMISSION_MAP = {
         "vision_scope.view",
 
         "requirements.view",
+        "requirements.approve",
+        "requirements.reject",
+        "requirements.comment",
 
         "notifications.view",
     ],
@@ -124,6 +134,9 @@ ROLE_PERMISSION_MAP = {
         "vision_scope.view",
 
         "requirements.view",
+        "requirements.approve",
+        "requirements.reject",
+        "requirements.comment",
 
         "notifications.view",
     ],
@@ -138,6 +151,9 @@ ROLE_PERMISSION_MAP = {
         "vision_scope.view",
 
         "requirements.view",
+        "requirements.approve",
+        "requirements.reject",
+        "requirements.comment",
 
         "notifications.view",
     ],

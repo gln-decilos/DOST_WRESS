@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { ChevronDown, ChevronLeft, ChevronRight, Eye, Pencil } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, Pencil } from "lucide-react"
 
 type TemplateField = {
   id: number
@@ -70,6 +70,29 @@ type DocumentContextResponse = {
 }
 
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
+const ACCESS_API_BASE_URL = "http://localhost:5000/api/access"
+
+const getAuthToken = () => {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("token")
+  }
+
+  return null
+}
+
+const createAuthHeaders = () => {
+  const token = getAuthToken()
+
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  return headers
+}
 
 function normalizeVersion(version: string) {
   return version.replace(/^v/i, "").trim()
@@ -92,6 +115,7 @@ function compareVersions(a: string, b: string) {
   const vb = parseVersion(b)
 
   if (va.major !== vb.major) return vb.major - va.major
+
   return vb.minor - va.minor
 }
 
@@ -113,12 +137,16 @@ export default function VisionScopePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  // Extract parameters from URL
   const id = searchParams.get("id")
   const documentIdParam = searchParams.get("documentId")
 
   const projectId = id ? Number(id) : null
   const documentId = documentIdParam ? Number(documentIdParam) : null
+
+  const [canViewVisionScope, setCanViewVisionScope] = useState(false)
+  const [canCreateVisionScope, setCanCreateVisionScope] = useState(false)
+  const [canUpdateVisionScope, setCanUpdateVisionScope] = useState(false)
+  const [permissionLoading, setPermissionLoading] = useState(true)
 
   const [template, setTemplate] = useState<DocumentTemplate | null>(null)
   const [document, setDocument] = useState<VisionScopeDocument | null>(null)
@@ -127,18 +155,88 @@ export default function VisionScopePage() {
   const [message, setMessage] = useState("")
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({})
 
-  const latestVisionScope = useMemo(() => documents[0] || null, [documents])
+  const draftVisionScope = useMemo(() => {
+    return documents.find((item) => item.status === "Draft") || null
+  }, [documents])
+
+  const publishedVisionScopes = useMemo(() => {
+    return [...documents]
+      .filter((item) => item.status !== "Draft")
+      .sort((a, b) => compareVersions(a.version, b.version))
+  }, [documents])
+
+  const latestVisionScope = useMemo(() => {
+    return publishedVisionScopes[0] || null
+  }, [publishedVisionScopes])
+
+  const canCreateNewVersion = draftVisionScope
+    ? canUpdateVisionScope
+    : canCreateVisionScope
 
   const getFieldValueFromDocument = (fieldId: number) => {
-    const value = document?.values?.find((item) => item.template_field_id === fieldId)
+    const value = document?.values?.find(
+      (item) => item.template_field_id === fieldId
+    )
+
     return value?.value_text || ""
   }
 
-  const getAuthToken = () => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("token")
+  const checkProjectPermission = async (permission: string) => {
+    if (!projectId || isNaN(projectId)) return false
+
+    try {
+      const token = getAuthToken()
+
+      if (!token) {
+        router.push("/signin")
+        return false
+      }
+
+      const res = await fetch(`${ACCESS_API_BASE_URL}/check`, {
+        method: "POST",
+        headers: createAuthHeaders(),
+        credentials: "include",
+        body: JSON.stringify({
+          permission,
+          project_id: projectId,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) return false
+
+      return Boolean(data.allowed)
+    } catch (error) {
+      console.error(`Failed to check permission: ${permission}`, error)
+      return false
     }
-    return null
+  }
+
+  const checkVisionScopePermissions = async () => {
+    if (!projectId || isNaN(projectId)) {
+      setCanViewVisionScope(false)
+      setCanCreateVisionScope(false)
+      setCanUpdateVisionScope(false)
+      setPermissionLoading(false)
+      return
+    }
+
+    try {
+      setPermissionLoading(true)
+
+      const [viewAllowed, createAllowed, updateAllowed] = await Promise.all([
+        checkProjectPermission("vision_scope.view"),
+        checkProjectPermission("vision_scope.create"),
+        checkProjectPermission("vision_scope.update"),
+      ])
+
+      setCanViewVisionScope(viewAllowed)
+      setCanCreateVisionScope(createAllowed)
+      setCanUpdateVisionScope(updateAllowed)
+    } finally {
+      setPermissionLoading(false)
+    }
   }
 
   const fetchData = async () => {
@@ -153,48 +251,55 @@ export default function VisionScopePage() {
       setMessage("")
 
       const token = getAuthToken()
-      console.log("Token exists:", !!token)
-      console.log("ProjectId:", projectId, "DocumentId:", documentId)
 
-      const headers: HeadersInit = {
-        "Content-Type": "application/json",
-      }
-      if (token) {
-        headers.Authorization = `Bearer ${token}`
+      if (!token) {
+        router.push("/signin")
+        return
       }
 
       const documentUrl = `${API_BASE_URL}/project/${projectId}/vision-scope/documents/${documentId}`
       const documentsUrl = `${API_BASE_URL}/project/${projectId}/vision-scope/documents`
 
-      console.log("Fetching document from:", documentUrl)
-      console.log("Fetching documents from:", documentsUrl)
-
       const [documentRes, docsRes] = await Promise.all([
         fetch(documentUrl, {
           method: "GET",
           credentials: "include",
-          headers,
+          headers: createAuthHeaders(),
         }),
         fetch(documentsUrl, {
           method: "GET",
           credentials: "include",
-          headers,
+          headers: createAuthHeaders(),
         }),
       ])
 
-      console.log("Document response status:", documentRes.status)
-      console.log("Documents response status:", docsRes.status)
-
-      const documentData = (await readJsonResponse(documentRes)) as DocumentContextResponse | null
+      const documentData =
+        (await readJsonResponse(documentRes)) as DocumentContextResponse | null
       const docsData = await readJsonResponse(docsRes)
 
       if (!documentRes.ok) {
-        setMessage((documentData as any)?.message || `Failed to fetch document (Status: ${documentRes.status})`)
+        if (documentRes.status === 401) {
+          router.push("/signin")
+          return
+        }
+
+        setMessage(
+          (documentData as any)?.message ||
+            `Failed to fetch document (Status: ${documentRes.status})`
+        )
         return
       }
 
       if (!docsRes.ok) {
-        setMessage(docsData?.message || `Failed to fetch documents (Status: ${docsRes.status})`)
+        if (docsRes.status === 401) {
+          router.push("/signin")
+          return
+        }
+
+        setMessage(
+          docsData?.message ||
+            `Failed to fetch documents (Status: ${docsRes.status})`
+        )
         return
       }
 
@@ -203,26 +308,34 @@ export default function VisionScopePage() {
         return
       }
 
-      const sortedDocuments = [...(docsData?.documents || [])]
-        .filter((item: VisionScopeDocument) => item.status !== "Draft")
-        .sort((a, b) => compareVersions(a.version, b.version))
-
       setTemplate(documentData.template)
       setDocument(documentData.document)
-      setDocuments(sortedDocuments)
+      setDocuments(Array.isArray(docsData?.documents) ? docsData.documents : [])
 
       const initialOpenSections: Record<number, boolean> = {}
+
       documentData.template.sections.forEach((section) => {
         initialOpenSections[section.id] = true
       })
+
       setOpenSections(initialOpenSections)
     } catch (error) {
       console.error("Failed to fetch vision scope details:", error)
-      setMessage(`Failed to fetch vision scope details: ${error instanceof Error ? error.message : String(error)}`)
+      setMessage(
+        `Failed to fetch vision scope details: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
     } finally {
       setFetching(false)
     }
   }
+
+  useEffect(() => {
+    if (projectId && !isNaN(projectId) && projectId > 0) {
+      checkVisionScopePermissions()
+    }
+  }, [projectId])
 
   useEffect(() => {
     if (projectId && documentId) {
@@ -241,21 +354,36 @@ export default function VisionScopePage() {
   }
 
   const SectionToggleIcon = ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
+    isOpen ? (
+      <ChevronDown className="h-4 w-4" />
+    ) : (
+      <ChevronRight className="h-4 w-4" />
+    )
 
-  // Check for missing parameters
   if (!id || !documentIdParam) {
     return (
       <section className="rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
         <div className="rounded-2xl bg-background p-8 text-center ring-1 ring-border">
-          <h2 className="text-xl font-semibold text-red-600 mb-4">Missing Parameters</h2>
-          <p className="text-muted-foreground mb-2">Unable to load the Vision & Scope document.</p>
-          <p className="text-sm text-muted-foreground mb-4">
-            Expected URL format: <code className="bg-muted px-2 py-1 rounded">/stakeholder/projects/vision-scope?id=PROJECT_ID&documentId=DOCUMENT_ID</code>
+          <h2 className="mb-4 text-xl font-semibold text-red-600">
+            Missing Parameters
+          </h2>
+
+          <p className="mb-2 text-muted-foreground">
+            Unable to load the Vision & Scope document.
           </p>
+
+          <p className="mb-4 text-sm text-muted-foreground">
+            Expected URL format:{" "}
+            <code className="rounded bg-muted px-2 py-1">
+              /stakeholder/projects/vision-scope?id=PROJECT_ID&documentId=DOCUMENT_ID
+            </code>
+          </p>
+
           <p className="text-xs text-muted-foreground">
-            Received: id={id || "undefined"}, documentId={documentIdParam || "undefined"}
+            Received: id={id || "undefined"}, documentId=
+            {documentIdParam || "undefined"}
           </p>
+
           <button
             onClick={() => router.push("/stakeholder/projects/projects-page")}
             className="mt-4 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
@@ -291,7 +419,11 @@ export default function VisionScopePage() {
     <section className="w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
       <div className="mb-6">
         <button
-          onClick={() => router.push(`/stakeholder/projects/project-details?id=${projectId}&tab=vision-scope`)}
+          onClick={() =>
+            router.push(
+              `/stakeholder/projects/project-details?id=${projectId}&tab=vision-scope`
+            )
+          }
           className="mb-3 inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -305,26 +437,34 @@ export default function VisionScopePage() {
             </h1>
 
             <p className="mt-2 text-muted-foreground">
-              Created {new Date(document.created_at).toLocaleDateString()} · Updated{" "}
-              {new Date(document.updated_at).toLocaleDateString()}
+              Created {new Date(document.created_at).toLocaleDateString()} ·
+              Updated {new Date(document.updated_at).toLocaleDateString()}
             </p>
 
             <p className="mt-2 text-xs text-muted-foreground">
               Template used:{" "}
-              <span className="font-medium text-foreground">{template.name}</span>
+              <span className="font-medium text-foreground">
+                {template.name}
+              </span>
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push(`/stakeholder/projects/project-details?id=${projectId}&tab=vision-scope`)}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              <Pencil className="h-4 w-4" />
-              Create New Version
-            </button>
-          </div>
+          {!permissionLoading && canViewVisionScope && canCreateNewVersion && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    `/stakeholder/projects/project-details?id=${projectId}&tab=vision-scope`
+                  )
+                }
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Pencil className="h-4 w-4" />
+                {draftVisionScope ? "Continue Draft" : "Create New Version"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -334,10 +474,18 @@ export default function VisionScopePage() {
         </div>
       )}
 
+      {!permissionLoading && !canViewVisionScope && (
+        <div className="mb-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+          You do not have permission to view Vision & Scope documents.
+        </div>
+      )}
+
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-xl border border-border bg-background p-4">
           <p className="text-sm font-medium text-muted-foreground">Version</p>
-          <p className="mt-1 text-lg font-semibold text-foreground">{document.version}</p>
+          <p className="mt-1 text-lg font-semibold text-foreground">
+            {document.version}
+          </p>
         </div>
 
         <div className="rounded-xl border border-border bg-background p-4">
@@ -357,7 +505,10 @@ export default function VisionScopePage() {
 
       <div className="rounded-2xl bg-background ring-1 ring-border">
         <div className="border-b border-border px-6 py-4">
-          <h2 className="text-lg font-semibold text-foreground">Document Content</h2>
+          <h2 className="text-lg font-semibold text-foreground">
+            Document Content
+          </h2>
+
           <p className="mt-1 text-sm text-muted-foreground">
             Review the full Vision & Scope document below.
           </p>
@@ -373,8 +524,11 @@ export default function VisionScopePage() {
               >
                 <div>
                   <p className="font-medium text-foreground">{section.title}</p>
+
                   {section.description && (
-                    <p className="text-sm text-muted-foreground">{section.description}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {section.description}
+                    </p>
                   )}
                 </div>
 
@@ -385,7 +539,9 @@ export default function VisionScopePage() {
                 <div className="space-y-5 border-t border-border px-4 py-4">
                   {section.fields.map((field) => (
                     <div key={field.id}>
-                      <p className="text-sm font-semibold text-foreground">{field.label}</p>
+                      <p className="text-sm font-semibold text-foreground">
+                        {field.label}
+                      </p>
 
                       <div className="mt-2 rounded-lg border border-border bg-background px-4 py-3">
                         <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">
@@ -394,7 +550,9 @@ export default function VisionScopePage() {
                       </div>
 
                       {field.help_text && (
-                        <p className="mt-2 text-xs text-muted-foreground">{field.help_text}</p>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {field.help_text}
+                        </p>
                       )}
                     </div>
                   ))}
