@@ -8,7 +8,6 @@ from app.models.document_template_field import DocumentTemplateField
 from app.models.project_document import ProjectDocument
 from app.models.requirement_item import RequirementItem
 from app.models.requirement_item_value import RequirementItemValue
-from app.models.project_stakeholder import ProjectStakeholder
 from app.models.notification import Notification
 from app.models.requirement_approval import RequirementApproval
 from app.models.requirement_comment import RequirementComment
@@ -52,6 +51,21 @@ def get_active_user_id():
         return parse_int(token_user_id)
 
     return parse_int(session.get("user_id"))
+
+
+def is_document_visible_to_current_user(document):
+    current_user_id = get_active_user_id()
+
+    if document.status == "Draft" and document.created_by != current_user_id:
+        return False
+
+    return True
+
+
+def hidden_draft_response():
+    return jsonify({
+        "message": "This draft document is only visible to the user who created it"
+    }), 403
 
 
 def get_template_field_maps(template):
@@ -138,7 +152,7 @@ def get_required_requirement_approvers(project_id, document=None):
     current_user_id = get_active_user_id()
     submitter_id = document.created_by if document else current_user_id
 
-    return (
+    project_members = (
         UserRole.query
         .filter(
             UserRole.project_id == project_id,
@@ -148,12 +162,26 @@ def get_required_requirement_approvers(project_id, document=None):
         .all()
     )
 
+    unique_members = []
+    seen_user_ids = set()
+
+    for member in project_members:
+        if member.user_id in seen_user_ids:
+            continue
+
+        unique_members.append(member)
+        seen_user_ids.add(member.user_id)
+
+    return unique_members
+
 
 def pick_first_value(values: dict, keys: list[str], default_value: str = ""):
     for key in keys:
         value = values.get(key)
+
         if value is not None and str(value).strip() != "":
             return str(value).strip()
+
     return default_value
 
 
@@ -577,15 +605,15 @@ def get_requirement_documents(project_id):
 
     current_user_id = get_active_user_id()
 
-    documents_query = (
+    documents = (
         ProjectDocument.query
         .filter(
             ProjectDocument.project_id == project_id,
             ProjectDocument.template_id.in_(template_ids)
         )
+        .order_by(ProjectDocument.created_at.desc())
+        .all()
     )
-
-    documents = documents_query.order_by(ProjectDocument.created_at.desc()).all()
 
     visible_documents = []
 
@@ -595,7 +623,11 @@ def get_requirement_documents(project_id):
 
         visible_documents.append(document)
 
-    payload = [build_requirement_document_summary(document) for document in visible_documents]
+    payload = [
+        build_requirement_document_summary(document)
+        for document in visible_documents
+    ]
+
     payload.sort(key=lambda item: compare_version_tuple(item["version"]), reverse=True)
 
     return jsonify({"documents": payload}), 200
@@ -663,12 +695,8 @@ def get_requirement_document_details(project_id, document_id):
     if not document:
         return jsonify({"message": "Requirement document not found"}), 404
 
-    current_user_id = get_active_user_id()
-
-    if document.status == "Draft" and document.created_by != current_user_id:
-        return jsonify({
-            "message": "This draft document is only visible to the user who created it"
-        }), 403
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
 
     document_template = DocumentTemplate.query.get(document.template_id)
     latest_default_template = get_default_requirements_template()
@@ -702,6 +730,9 @@ def update_requirement_document(project_id, document_id):
 
     if not document:
         return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
 
     data = request.get_json() or {}
 
@@ -747,6 +778,9 @@ def delete_requirement_document(project_id, document_id):
 
     if not document:
         return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
 
     Notification.query.filter_by(
         document_id=document.id
@@ -1040,17 +1074,6 @@ def freeze_requirement_document(project_id, document_id):
         exclude_user_ids=[current_user_id],
     )
 
-    if document.created_by and document.created_by != current_user_id:
-        create_notification(
-            user_id=document.created_by,
-            project_id=project_id,
-            document_id=document_id,
-            title="Requirements Document Frozen",
-            message=f"Requirements Document v{document.version} has been frozen and is now the baseline.",
-            notification_type="requirements_frozen",
-            link=link,
-        )
-
     db.session.commit()
 
     return jsonify({
@@ -1086,6 +1109,9 @@ def get_requirement_document_approval_summary(project_id, document_id):
 
     if not document:
         return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
 
     return jsonify({
         "summary": build_approval_summary(document)
@@ -1144,3 +1170,385 @@ def create_requirement_document_version(project_id, document_id):
         "document": build_requirement_document_summary(new_document),
         "raw_document": new_document.to_dict(include_requirement_items=True),
     }), 201
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items", methods=["GET"])
+@require_permission("requirements.view", project_arg="project_id")
+def get_requirement_items(project_id, document_id):
+    document = get_requirement_document_record(project_id, document_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    template = DocumentTemplate.query.get(document.template_id)
+
+    items = (
+        RequirementItem.query
+        .filter_by(project_document_id=document.id)
+        .order_by(RequirementItem.sort_order.asc(), RequirementItem.created_at.asc())
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            build_requirement_item_summary(item, template)
+            for item in items
+        ]
+    }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items", methods=["POST"])
+@require_permission("requirements.create", project_arg="project_id")
+def create_requirement_item(project_id, document_id):
+    document = get_requirement_document_record(project_id, document_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if document.status not in ["Draft", "Rejected"]:
+        return jsonify({
+            "message": "Requirements can only be added while the document is draft or rejected"
+        }), 400
+
+    template = DocumentTemplate.query.get(document.template_id)
+
+    if not template:
+        return jsonify({"message": "Requirements template not found"}), 404
+
+    data = request.get_json() or {}
+    values_input = data.get("values") or {}
+
+    normalized_values, keyed_values = normalize_item_payload(values_input, template)
+
+    title = pick_first_value(keyed_values, REQUIREMENT_TITLE_KEYS, "")
+
+    if not title:
+        return jsonify({"message": "Requirement title is required"}), 400
+
+    requirement_code = pick_first_value(
+        keyed_values,
+        REQUIREMENT_CODE_KEYS,
+        get_next_requirement_code(document.id)
+    )
+
+    priority = pick_first_value(keyed_values, REQUIREMENT_PRIORITY_KEYS, "Medium")
+    status = pick_first_value(keyed_values, REQUIREMENT_STATUS_KEYS, "Draft")
+    description = pick_first_value(keyed_values, REQUIREMENT_DESCRIPTION_KEYS, "")
+    rationale = pick_first_value(keyed_values, REQUIREMENT_RATIONALE_KEYS, "")
+
+    keyed_values.setdefault("requirement_code", requirement_code)
+    keyed_values.setdefault("requirement_id", requirement_code)
+    keyed_values.setdefault("title", title)
+    keyed_values.setdefault("requirement_title", title)
+    keyed_values.setdefault("priority", priority)
+    keyed_values.setdefault("requirement_priority", priority)
+    keyed_values.setdefault("status", status)
+    keyed_values.setdefault("requirement_status", status)
+    keyed_values.setdefault("description", description)
+    keyed_values.setdefault("requirement_description", description)
+    keyed_values.setdefault("rationale", rationale)
+    keyed_values.setdefault("requirement_rationale", rationale)
+
+    normalized_values = []
+
+    for section in template.sections:
+        for field in section.fields:
+            normalized_values.append({
+                "template_field_id": field.id,
+                "value_text": str(keyed_values.get(field.key, field.default_value or "") or ""),
+            })
+
+    last_item = (
+        RequirementItem.query
+        .filter_by(project_document_id=document.id)
+        .order_by(RequirementItem.sort_order.desc())
+        .first()
+    )
+
+    sort_order = (last_item.sort_order + 1) if last_item else 1
+
+    item = RequirementItem(
+        project_document_id=document.id,
+        sort_order=sort_order,
+        created_by=get_active_user_id(),
+    )
+
+    db.session.add(item)
+    db.session.flush()
+
+    replace_item_values(item.id, normalized_values)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Requirement item created successfully",
+        "item": build_requirement_item_summary(item, template),
+        "raw_item": item.to_dict(include_values=True),
+    }), 201
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>", methods=["GET"])
+@require_permission("requirements.view", project_arg="project_id")
+def get_requirement_item(project_id, document_id, item_id):
+    document = get_requirement_document_record(project_id, document_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    item = RequirementItem.query.filter_by(
+        id=item_id,
+        project_document_id=document.id
+    ).first()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    template = DocumentTemplate.query.get(document.template_id)
+
+    return jsonify({
+        "item": item.to_dict(include_values=True),
+        "summary": build_requirement_item_summary(item, template),
+        "template": template.to_dict(include_sections=True) if template else None,
+    }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>", methods=["PUT"])
+@require_permission("requirements.edit", project_arg="project_id")
+def update_requirement_item(project_id, document_id, item_id):
+    document = get_requirement_document_record(project_id, document_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if document.status not in ["Draft", "Rejected"]:
+        return jsonify({
+            "message": "Requirements can only be edited while the document is draft or rejected"
+        }), 400
+
+    item = RequirementItem.query.filter_by(
+        id=item_id,
+        project_document_id=document.id
+    ).first()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    template = DocumentTemplate.query.get(document.template_id)
+
+    if not template:
+        return jsonify({"message": "Requirements template not found"}), 404
+
+    data = request.get_json() or {}
+    values_input = data.get("values") or {}
+
+    normalized_values, keyed_values = normalize_item_payload(values_input, template)
+
+    title = pick_first_value(keyed_values, REQUIREMENT_TITLE_KEYS, "")
+
+    if not title:
+        return jsonify({"message": "Requirement title is required"}), 400
+
+    requirement_code = pick_first_value(
+        keyed_values,
+        REQUIREMENT_CODE_KEYS,
+        build_requirement_item_summary(item, template)["requirement_code"]
+    )
+
+    priority = pick_first_value(keyed_values, REQUIREMENT_PRIORITY_KEYS, "Medium")
+    status = pick_first_value(keyed_values, REQUIREMENT_STATUS_KEYS, "Draft")
+    description = pick_first_value(keyed_values, REQUIREMENT_DESCRIPTION_KEYS, "")
+    rationale = pick_first_value(keyed_values, REQUIREMENT_RATIONALE_KEYS, "")
+
+    keyed_values.setdefault("requirement_code", requirement_code)
+    keyed_values.setdefault("requirement_id", requirement_code)
+    keyed_values.setdefault("title", title)
+    keyed_values.setdefault("requirement_title", title)
+    keyed_values.setdefault("priority", priority)
+    keyed_values.setdefault("requirement_priority", priority)
+    keyed_values.setdefault("status", status)
+    keyed_values.setdefault("requirement_status", status)
+    keyed_values.setdefault("description", description)
+    keyed_values.setdefault("requirement_description", description)
+    keyed_values.setdefault("rationale", rationale)
+    keyed_values.setdefault("requirement_rationale", rationale)
+
+    normalized_values = []
+
+    for section in template.sections:
+        for field in section.fields:
+            normalized_values.append({
+                "template_field_id": field.id,
+                "value_text": str(keyed_values.get(field.key, field.default_value or "") or ""),
+            })
+
+    replace_item_values(item.id, normalized_values)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Requirement item updated successfully",
+        "item": build_requirement_item_summary(item, template),
+        "raw_item": item.to_dict(include_values=True),
+    }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>", methods=["DELETE"])
+@require_permission("requirements.delete", project_arg="project_id")
+def delete_requirement_item(project_id, document_id, item_id):
+    document = get_requirement_document_record(project_id, document_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if document.status not in ["Draft", "Rejected"]:
+        return jsonify({
+            "message": "Requirements can only be deleted while the document is draft or rejected"
+        }), 400
+
+    item = RequirementItem.query.filter_by(
+        id=item_id,
+        project_document_id=document.id
+    ).first()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    RequirementComment.query.filter_by(item_id=item.id).delete(synchronize_session=False)
+    RequirementItemValue.query.filter_by(item_id=item.id).delete()
+    db.session.delete(item)
+    db.session.commit()
+
+    return jsonify({"message": "Requirement item deleted successfully"}), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>/comments", methods=["GET"])
+@require_permission("requirements.view", project_arg="project_id")
+def get_requirement_comments(project_id, document_id, item_id):
+    document, item = get_requirement_item_record(project_id, document_id, item_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    comments = (
+        RequirementComment.query
+        .filter_by(
+            project_id=project_id,
+            document_id=document_id,
+            item_id=item_id,
+        )
+        .order_by(RequirementComment.created_at.asc(), RequirementComment.id.asc())
+        .all()
+    )
+
+    return jsonify({
+        "comments": [
+            serialize_requirement_comment(comment)
+            for comment in comments
+        ]
+    }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>/comments", methods=["POST"])
+@require_permission("requirements.view", project_arg="project_id")
+def create_requirement_comment(project_id, document_id, item_id):
+    current_user_id = get_active_user_id()
+
+    if not current_user_id:
+        return jsonify({"message": "Authentication required"}), 401
+
+    document, item = get_requirement_item_record(project_id, document_id, item_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    data = request.get_json() or {}
+    comment_text = (data.get("comment_text") or "").strip()
+
+    if not comment_text:
+        return jsonify({"message": "Comment cannot be empty"}), 400
+
+    comment = RequirementComment(
+        project_id=project_id,
+        document_id=document_id,
+        item_id=item_id,
+        user_id=current_user_id,
+        comment_text=comment_text,
+    )
+
+    db.session.add(comment)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Comment added successfully",
+        "comment": serialize_requirement_comment(comment),
+    }), 201
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>/comments/<int:comment_id>", methods=["DELETE"])
+@require_permission("requirements.view", project_arg="project_id")
+def delete_requirement_comment(project_id, document_id, item_id, comment_id):
+    current_user_id = get_active_user_id()
+
+    if not current_user_id:
+        return jsonify({"message": "Authentication required"}), 401
+
+    document, item = get_requirement_item_record(project_id, document_id, item_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    comment = RequirementComment.query.filter_by(
+        id=comment_id,
+        project_id=project_id,
+        document_id=document_id,
+        item_id=item_id,
+    ).first()
+
+    if not comment:
+        return jsonify({"message": "Comment not found"}), 404
+
+    can_delete = (
+        comment.user_id == current_user_id
+        or user_has_permission(current_user_id, "requirements.delete", project_id)
+    )
+
+    if not can_delete:
+        return jsonify({
+            "message": "You don't have permission to delete this comment"
+        }), 403
+
+    db.session.delete(comment)
+    db.session.commit()
+
+    return jsonify({"message": "Comment deleted successfully"}), 200
