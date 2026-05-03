@@ -12,6 +12,7 @@ import {
   Plus,
   Snowflake,
   Trash2,
+  Unlock,
   XCircle,
 } from "lucide-react"
 import DynamicTemplateForm from "@/components/vision-scope/dynamic-form-template"
@@ -228,6 +229,8 @@ function getStatusDescription(status: string) {
       return "This requirements document was rejected and needs revision before resubmission."
     case "Frozen":
       return "This requirements document is locked and used as the development baseline."
+    case "Unfrozen":
+      return "This requirements document has been unfrozen. Create a new editable version before making changes."
     default:
       return "-"
   }
@@ -245,6 +248,8 @@ function getStatusBadgeClasses(status: string) {
       return "bg-red-100 text-red-700 ring-red-200"
     case "Frozen":
       return "bg-slate-100 text-slate-700 ring-slate-200"
+    case "Unfrozen":
+      return "bg-purple-100 text-purple-700 ring-purple-200"
     default:
       return "bg-slate-100 text-slate-700 ring-slate-200"
   }
@@ -902,10 +907,49 @@ export default function RequirementsDocumentPage() {
         return
       }
 
+      setMessage(data.message || "Requirement document frozen successfully")
       await fetchData()
     } catch (error) {
       console.error("Failed to freeze document:", error)
       setMessage("Failed to freeze document")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const unfreezeDocument = async () => {
+    if (!documentSummary) return
+
+    if (!canFreezeRequirements) {
+      setMessage("You don't have permission to unfreeze requirements.")
+      return
+    }
+
+    try {
+      setLoading(true)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/unfreeze`,
+        {
+          method: "POST",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to unfreeze document")
+        return
+      }
+
+      setMessage(data.message || "Requirement document unfrozen successfully")
+      await fetchData()
+    } catch (error) {
+      console.error("Failed to unfreeze document:", error)
+      setMessage("Failed to unfreeze document")
     } finally {
       setLoading(false)
     }
@@ -1262,6 +1306,20 @@ export default function RequirementsDocumentPage() {
             )}
 
           {documentSummary.status === "Frozen" &&
+            !permissionLoading &&
+            canFreezeRequirements && (
+              <button
+                type="button"
+                onClick={unfreezeDocument}
+                disabled={loading}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                <Unlock className="h-4 w-4" />
+                Unfreeze Document
+              </button>
+            )}
+
+          {documentSummary.status === "Unfrozen" &&
             !permissionLoading &&
             canEditRequirements && (
               <button
@@ -1896,8 +1954,8 @@ export default function RequirementsDocumentPage() {
             </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
-              This document is frozen. Choose whether the next editable version
-              should be a minor or major update.
+              This document has been unfrozen. Choose whether the next editable
+              version should be a minor or major update.
             </p>
 
             <div className="mt-5 space-y-3">
