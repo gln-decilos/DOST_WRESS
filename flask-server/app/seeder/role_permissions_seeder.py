@@ -52,6 +52,7 @@ ROLE_PERMISSION_MAP = {
         "requirements.reject",
         "requirements.freeze",
         "requirements.comment",
+        "requirements.request_change",
 
         "notifications.view",
         "notifications.manage",
@@ -80,6 +81,7 @@ ROLE_PERMISSION_MAP = {
         "requirements.reject",
         "requirements.freeze",
         "requirements.comment",
+        "requirements.request_change",
 
         "notifications.view",
     ],
@@ -103,6 +105,7 @@ ROLE_PERMISSION_MAP = {
         "requirements.submit_approval",
         "requirements.freeze",
         "requirements.comment",
+        "requirements.request_change",
 
         "notifications.view",
     ],

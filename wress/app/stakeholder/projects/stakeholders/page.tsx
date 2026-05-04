@@ -678,7 +678,7 @@ export default function ProjectStakeholdersPage() {
         </button>
 
         <button className={tabButtonClasses("stakeholders")}>
-          Stakeholders
+          Project Members & Stakeholders
         </button>
 
         <button
@@ -714,7 +714,7 @@ export default function ProjectStakeholdersPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold text-foreground">
-              Stakeholders
+              Project Members & Stakeholders
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Manage users assigned to this project and their project-specific roles.
@@ -726,7 +726,7 @@ export default function ProjectStakeholdersPage() {
               onClick={openAddModal}
               className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
             >
-              Add Stakeholder
+              Add Project Member/Stakeholder
             </button>
           )}
         </div>
@@ -734,7 +734,7 @@ export default function ProjectStakeholdersPage() {
         <div className="overflow-hidden rounded-2xl bg-background ring-1 ring-border">
           <div className="border-b border-border px-6 py-4">
             <h3 className="text-lg font-semibold text-foreground">
-              Project Stakeholders
+              Project Members & Stakeholders
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
               Each row represents one user assigned to this project.

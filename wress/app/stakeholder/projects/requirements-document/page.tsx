@@ -1,18 +1,21 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
   CheckCircle,
   ChevronLeft,
+  ClipboardList,
   Eye,
   FileCheck,
   MessageSquare,
   Pencil,
   Plus,
+  Send,
   Snowflake,
   Trash2,
   Unlock,
+  Upload,
   XCircle,
 } from "lucide-react"
 import DynamicTemplateForm from "@/components/vision-scope/dynamic-form-template"
@@ -172,6 +175,53 @@ type RequirementComment = {
   updated_at?: string | null
 }
 
+type RequirementChangeRequest = {
+  id: number
+  project_id: number
+  document_id: number
+  item_id: number
+  status: "Draft" | "Submitted" | string
+  requested_by_name: string
+  requested_date?: string | null
+  change_type: string
+  priority: string
+  intended_change: string
+  reason?: string | null
+  remarks?: string | null
+  stakeholder_form_filename?: string | null
+  stakeholder_form_path?: string | null
+  stakeholder_form_mime_type?: string | null
+  stakeholder_form_size?: number | null
+  created_by?: number | null
+  submitted_by?: number | null
+  submitted_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  can_delete?: boolean
+  can_view_file?: boolean
+  requirement?: RequirementItemSummary | null
+  current_requirement_snapshot?: Partial<RequirementItemSummary> | null
+}
+
+type ChangeRequestFormState = {
+  requested_by_name: string
+  requested_date: string
+  change_type: string
+  priority: string
+  intended_change: string
+  reason: string
+  remarks: string
+}
+
+type RequirementPermissionState = {
+  createAllowed: boolean
+  editAllowed: boolean
+  deleteAllowed: boolean
+  submitAllowed: boolean
+  freezeAllowed: boolean
+  requestChangeAllowed: boolean
+}
+
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
 const ACCESS_API_BASE_URL = "http://localhost:5000/api/access"
 
@@ -183,11 +233,13 @@ const getAuthToken = () => {
   return null
 }
 
-const createAuthHeaders = () => {
+const createAuthHeaders = (includeContentType = true) => {
   const token = getAuthToken()
 
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
+  const headers: Record<string, string> = {}
+
+  if (includeContentType) {
+    headers["Content-Type"] = "application/json"
   }
 
   if (token) {
@@ -215,6 +267,22 @@ function formatDateTime(value?: string | null) {
   if (Number.isNaN(date.getTime())) return "-"
 
   return date.toLocaleString()
+}
+
+function getTodayDateInputValue() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function getInitialChangeRequestForm(): ChangeRequestFormState {
+  return {
+    requested_by_name: "",
+    requested_date: getTodayDateInputValue(),
+    change_type: "Modify",
+    priority: "Medium",
+    intended_change: "",
+    reason: "",
+    remarks: "",
+  }
 }
 
 function getStatusDescription(status: string) {
@@ -266,6 +334,17 @@ function getApprovalStatusClasses(status: string) {
   }
 }
 
+function getChangeRequestStatusClasses(status: string) {
+  switch (status) {
+    case "Draft":
+      return "border-amber-200 bg-amber-50 text-amber-700"
+    case "Submitted":
+      return "border-blue-200 bg-blue-50 text-blue-700"
+    default:
+      return "border-border bg-background text-muted-foreground"
+  }
+}
+
 export default function RequirementsDocumentPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -280,9 +359,10 @@ export default function RequirementsDocumentPage() {
     useState<RequirementDocumentSummary | null>(null)
   const [template, setTemplate] = useState<DocumentTemplate | null>(null)
   const [requirements, setRequirements] = useState<RequirementItemSummary[]>([])
+  const [changeRequests, setChangeRequests] = useState<RequirementChangeRequest[]>([])
 
   const [fetching, setFetching] = useState(true)
-  const [loading, setLoading] = useState(false)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [permissionLoading, setPermissionLoading] = useState(true)
   const [message, setMessage] = useState("")
 
@@ -291,6 +371,7 @@ export default function RequirementsDocumentPage() {
   const [canDeleteRequirements, setCanDeleteRequirements] = useState(false)
   const [canSubmitApproval, setCanSubmitApproval] = useState(false)
   const [canFreezeRequirements, setCanFreezeRequirements] = useState(false)
+  const [canRequestChange, setCanRequestChange] = useState(false)
 
   const [requirementModalOpen, setRequirementModalOpen] = useState(false)
   const [editingRequirementId, setEditingRequirementId] =
@@ -318,12 +399,67 @@ export default function RequirementsDocumentPage() {
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [newComment, setNewComment] = useState("")
 
+  const [changeRequestModalOpen, setChangeRequestModalOpen] = useState(false)
+  const [selectedRequirementForChange, setSelectedRequirementForChange] =
+    useState<RequirementItemSummary | null>(null)
+  const [
+    selectedRequirementForChangeRequestDetails,
+    setSelectedRequirementForChangeRequestDetails,
+  ] = useState<RequirementItemSummary | null>(null)
+  const [changeRequestForm, setChangeRequestForm] =
+    useState<ChangeRequestFormState>(getInitialChangeRequestForm())
+  const [signedChangeRequestFile, setSignedChangeRequestFile] =
+    useState<File | null>(null)
+
+  const isActionLoading = (action: string) => actionLoading === action
+
   const canModify =
     documentSummary?.status === "Draft" || documentSummary?.status === "Rejected"
 
   const canAddRequirement = Boolean(canModify && canCreateRequirements)
   const canEditRequirement = Boolean(canModify && canEditRequirements)
   const canDeleteRequirement = Boolean(canModify && canDeleteRequirements)
+
+  const canRequestChangeForDocument = Boolean(
+    documentSummary &&
+      canRequestChange &&
+      ["Approved", "Frozen", "Unfrozen"].includes(documentSummary.status)
+  )
+
+  const draftChangeRequestCount = useMemo(() => {
+    if (!canRequestChange) return 0
+
+    return changeRequests.filter((changeRequest) => changeRequest.status === "Draft")
+      .length
+  }, [canRequestChange, changeRequests])
+
+  const changeRequestsByRequirementId = useMemo(() => {
+    const grouped = new Map<number, RequirementChangeRequest[]>()
+
+    if (!canRequestChange) return grouped
+
+    changeRequests.forEach((changeRequest) => {
+      const current = grouped.get(changeRequest.item_id) || []
+      current.push(changeRequest)
+      grouped.set(changeRequest.item_id, current)
+    })
+
+    return grouped
+  }, [canRequestChange, changeRequests])
+
+  const selectedRequirementChangeRequests = useMemo(() => {
+    if (!canRequestChange || !selectedRequirementForChangeRequestDetails) return []
+
+    return (
+      changeRequestsByRequirementId.get(
+        selectedRequirementForChangeRequestDetails.id
+      ) || []
+    )
+  }, [
+    canRequestChange,
+    changeRequestsByRequirementId,
+    selectedRequirementForChangeRequestDetails,
+  ])
 
   const checkPermission = async (permission: string) => {
     if (!projectId || Number.isNaN(projectId)) return false
@@ -357,7 +493,7 @@ export default function RequirementsDocumentPage() {
     }
   }
 
-  const fetchPermissions = async () => {
+  const fetchPermissions = async (): Promise<RequirementPermissionState> => {
     try {
       setPermissionLoading(true)
 
@@ -367,12 +503,14 @@ export default function RequirementsDocumentPage() {
         deleteAllowed,
         submitAllowed,
         freezeAllowed,
+        requestChangeAllowed,
       ] = await Promise.all([
         checkPermission("requirements.create"),
         checkPermission("requirements.edit"),
         checkPermission("requirements.delete"),
         checkPermission("requirements.submit_approval"),
         checkPermission("requirements.freeze"),
+        checkPermission("requirements.request_change"),
       ])
 
       setCanCreateRequirements(createAllowed)
@@ -380,8 +518,98 @@ export default function RequirementsDocumentPage() {
       setCanDeleteRequirements(deleteAllowed)
       setCanSubmitApproval(submitAllowed)
       setCanFreezeRequirements(freezeAllowed)
+      setCanRequestChange(requestChangeAllowed)
+
+      return {
+        createAllowed,
+        editAllowed,
+        deleteAllowed,
+        submitAllowed,
+        freezeAllowed,
+        requestChangeAllowed,
+      }
     } finally {
       setPermissionLoading(false)
+    }
+  }
+
+  const fetchChangeRequests = async (targetDocumentId?: number) => {
+    if (!canRequestChange) {
+      setChangeRequests([])
+      return
+    }
+
+    if (!projectId || (!targetDocumentId && !documentSummary)) return
+
+    const activeDocumentId = targetDocumentId || documentSummary?.id
+
+    if (!activeDocumentId) return
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${activeDocumentId}/change-requests`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setChangeRequests([])
+        return
+      }
+
+      setChangeRequests(Array.isArray(data.change_requests) ? data.change_requests : [])
+    } catch (error) {
+      console.error("Failed to load change requests:", error)
+      setChangeRequests([])
+    }
+  }
+
+  const viewSignedChangeRequestFile = async (
+    changeRequest: RequirementChangeRequest
+  ) => {
+    if (!documentSummary || !canRequestChange) return
+
+    try {
+      setActionLoading(`view-change-request-file-${changeRequest.id}`)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/change-requests/${changeRequest.id}/file`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(false),
+          credentials: "include",
+        }
+      )
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setMessage(data?.message || "Failed to open signed change request form.")
+        return
+      }
+
+      const blob = await res.blob()
+      const fileUrl = window.URL.createObjectURL(blob)
+
+      window.open(fileUrl, "_blank", "noopener,noreferrer")
+
+      window.setTimeout(() => {
+        window.URL.revokeObjectURL(fileUrl)
+      }, 30000)
+    } catch (error) {
+      console.error("Failed to view signed change request form:", error)
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to open signed change request form."
+      )
+    } finally {
+      setActionLoading(null)
     }
   }
 
@@ -396,7 +624,6 @@ export default function RequirementsDocumentPage() {
     if (!activeDocumentId) return
 
     try {
-      setLoading(true)
       setMessage("")
 
       const res = await fetch(
@@ -423,12 +650,10 @@ export default function RequirementsDocumentPage() {
     } catch (error) {
       console.error("Failed to load approval summary:", error)
       setMessage("Failed to load approval summary")
-    } finally {
-      setLoading(false)
     }
   }
 
-  const fetchData = async () => {
+  const fetchData = async (requestChangeAllowed = false) => {
     if (!projectId || !documentId || Number.isNaN(projectId) || Number.isNaN(documentId)) {
       setFetching(false)
       setMessage("Missing project or document information. Please go back and try again.")
@@ -479,6 +704,12 @@ export default function RequirementsDocumentPage() {
       if (data.document_summary.status !== "Draft") {
         await fetchApprovalSummary(false, data.document_summary.id)
       }
+
+      if (requestChangeAllowed) {
+        await fetchChangeRequests(data.document_summary.id)
+      } else {
+        setChangeRequests([])
+      }
     } catch (error) {
       console.error("Failed to fetch requirement document page:", error)
       setMessage(
@@ -492,9 +723,57 @@ export default function RequirementsDocumentPage() {
   }
 
   useEffect(() => {
-    fetchPermissions()
-    fetchData()
+    let cancelled = false
+
+    const loadPage = async () => {
+      const permissions = await fetchPermissions()
+
+      if (cancelled) return
+
+      await fetchData(permissions.requestChangeAllowed)
+    }
+
+    loadPage()
+
+    return () => {
+      cancelled = true
+    }
   }, [projectId, documentId])
+
+  const updateRequirementInList = (summary: RequirementItemSummary) => {
+    setRequirements((prev) => {
+      const exists = prev.some((requirement) => requirement.id === summary.id)
+
+      if (exists) {
+        return prev.map((requirement) =>
+          requirement.id === summary.id ? summary : requirement
+        )
+      }
+
+      return [...prev, summary]
+    })
+
+    setSelectedRequirementDetails((prev) =>
+      prev && prev.summary.id === summary.id
+        ? {
+            ...prev,
+            summary,
+          }
+        : prev
+    )
+  }
+
+  const updateDocumentStatus = (status: string) => {
+    setDocumentSummary((prev) =>
+      prev
+        ? {
+            ...prev,
+            status,
+            updated_at: new Date().toISOString(),
+          }
+        : prev
+    )
+  }
 
   const toggleSection = (sectionId: number) => {
     setOpenSections((prev) => ({
@@ -582,7 +861,7 @@ export default function RequirementsDocumentPage() {
     if (!template || !documentSummary) return
 
     try {
-      setLoading(true)
+      setActionLoading(`load-requirement-${requirementId}`)
 
       const res = await fetch(
         `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/items/${requirementId}`,
@@ -611,7 +890,7 @@ export default function RequirementsDocumentPage() {
         error instanceof Error ? error.message : "Failed to load requirement."
       )
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -619,7 +898,6 @@ export default function RequirementsDocumentPage() {
     if (!template || !documentSummary) return
 
     try {
-      setLoading(true)
       setMessage("")
 
       const res = await fetch(
@@ -642,8 +920,6 @@ export default function RequirementsDocumentPage() {
     } catch (error) {
       console.error("Failed to load requirement details:", error)
       setMessage("Failed to load requirement details.")
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -653,6 +929,16 @@ export default function RequirementsDocumentPage() {
 
   const handleRequirementChange = (fieldKey: string, value: string) => {
     setRequirementValues((prev) => ({
+      ...prev,
+      [fieldKey]: value,
+    }))
+  }
+
+  const handleChangeRequestFormChange = (
+    fieldKey: keyof ChangeRequestFormState,
+    value: string
+  ) => {
+    setChangeRequestForm((prev) => ({
       ...prev,
       [fieldKey]: value,
     }))
@@ -682,8 +968,12 @@ export default function RequirementsDocumentPage() {
       return
     }
 
+    const actionKey = editingRequirementId
+      ? `save-requirement-${editingRequirementId}`
+      : "create-requirement"
+
     try {
-      setLoading(true)
+      setActionLoading(actionKey)
       setMessage("")
 
       const payload = {
@@ -710,18 +1000,249 @@ export default function RequirementsDocumentPage() {
         return
       }
 
+      const savedSummary =
+        data.summary || data.requirement || data.item_summary || data.item || null
+
+      if (savedSummary) {
+        updateRequirementInList(savedSummary)
+      }
+
       setRequirementModalOpen(false)
       setEditingRequirementId(null)
       setSelectedRequirementDetails(null)
 
-      await fetchData()
+      setDocumentSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              requirement_count:
+                !editingRequirementId && savedSummary
+                  ? prev.requirement_count + 1
+                  : prev.requirement_count,
+              updated_at: new Date().toISOString(),
+            }
+          : prev
+      )
+
+      setMessage(data.message || "Requirement saved successfully.")
     } catch (error) {
       console.error("Failed to save requirement:", error)
       setMessage(
         error instanceof Error ? error.message : "Failed to save requirement."
       )
     } finally {
-      setLoading(false)
+      setActionLoading(null)
+    }
+  }
+
+  const openChangeRequestModal = (requirement: RequirementItemSummary) => {
+    if (!canRequestChangeForDocument) {
+      setMessage("You don't have permission to log change requests for this document.")
+      return
+    }
+
+    setSelectedRequirementForChange(requirement)
+    setChangeRequestForm(getInitialChangeRequestForm())
+    setSignedChangeRequestFile(null)
+    setChangeRequestModalOpen(true)
+  }
+
+  const closeChangeRequestModal = () => {
+    setSelectedRequirementForChange(null)
+    setChangeRequestForm(getInitialChangeRequestForm())
+    setSignedChangeRequestFile(null)
+    setChangeRequestModalOpen(false)
+  }
+
+  const openChangeRequestDetailsModal = (requirement: RequirementItemSummary) => {
+    if (!canRequestChange) return
+
+    setSelectedRequirementForChangeRequestDetails(requirement)
+  }
+
+  const closeChangeRequestDetailsModal = () => {
+    setSelectedRequirementForChangeRequestDetails(null)
+  }
+
+  const saveChangeRequestDraft = async () => {
+    if (!documentSummary || !selectedRequirementForChange) return
+
+    if (!canRequestChangeForDocument) {
+      setMessage("You don't have permission to log change requests for this document.")
+      return
+    }
+
+    if (!changeRequestForm.requested_by_name.trim()) {
+      setMessage("Stakeholder/requester name is required.")
+      return
+    }
+
+    if (!changeRequestForm.intended_change.trim()) {
+      setMessage("Intended change description is required.")
+      return
+    }
+
+    if (!signedChangeRequestFile) {
+      setMessage("Signed change request form upload is required.")
+      return
+    }
+
+    try {
+      setActionLoading("save-change-request")
+      setMessage("")
+
+      const formData = new FormData()
+      formData.append("requested_by_name", changeRequestForm.requested_by_name)
+      formData.append("requested_date", changeRequestForm.requested_date)
+      formData.append("change_type", changeRequestForm.change_type)
+      formData.append("priority", changeRequestForm.priority)
+      formData.append("intended_change", changeRequestForm.intended_change)
+      formData.append("reason", changeRequestForm.reason)
+      formData.append("remarks", changeRequestForm.remarks)
+      formData.append("signed_change_request_form", signedChangeRequestFile)
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/items/${selectedRequirementForChange.id}/change-requests`,
+        {
+          method: "POST",
+          headers: createAuthHeaders(false),
+          credentials: "include",
+          body: formData,
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to save change request.")
+        return
+      }
+
+      const savedChangeRequest: RequirementChangeRequest | null =
+        data.change_request || data.request || null
+
+      if (savedChangeRequest) {
+        setChangeRequests((prev) => [savedChangeRequest, ...prev])
+      }
+
+      closeChangeRequestModal()
+      setMessage(data.message || "Change request saved as draft.")
+    } catch (error) {
+      console.error("Failed to save change request:", error)
+      setMessage(
+        error instanceof Error ? error.message : "Failed to save change request."
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const submitChangeRequests = async () => {
+    if (!documentSummary) return
+
+    if (!canRequestChange) {
+      setMessage("You don't have permission to submit change requests.")
+      return
+    }
+
+    try {
+      setActionLoading("submit-change-requests")
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/change-requests/submit`,
+        {
+          method: "POST",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to submit change requests.")
+        return
+      }
+
+      const submittedAt = new Date().toISOString()
+
+      setChangeRequests((prev) =>
+        prev.map((changeRequest) =>
+          changeRequest.status === "Draft"
+            ? {
+                ...changeRequest,
+                status: "Submitted",
+                submitted_at: submittedAt,
+              }
+            : changeRequest
+        )
+      )
+
+      closeChangeRequestDetailsModal()
+
+      setMessage(
+        `${data.message || "Change requests submitted successfully"}. Submitted ${
+          data.submitted_count ?? draftChangeRequestCount
+        } change request(s) affecting ${
+          data.affected_requirement_count ?? "selected"
+        } requirement(s).`
+      )
+    } catch (error) {
+      console.error("Failed to submit change requests:", error)
+      setMessage(
+        error instanceof Error ? error.message : "Failed to submit change requests."
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const deleteDraftChangeRequest = async (changeRequest: RequirementChangeRequest) => {
+    if (!documentSummary) return
+
+    if (!canRequestChange || changeRequest.can_delete === false) {
+      setMessage("You don't have permission to delete this draft change request.")
+      return
+    }
+
+    const confirmed = window.confirm("Delete this draft change request?")
+
+    if (!confirmed) return
+
+    try {
+      setActionLoading(`delete-change-request-${changeRequest.id}`)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/change-requests/${changeRequest.id}`,
+        {
+          method: "DELETE",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to delete change request.")
+        return
+      }
+
+      setChangeRequests((prev) =>
+        prev.filter((item) => item.id !== changeRequest.id)
+      )
+
+      closeChangeRequestDetailsModal()
+      setMessage(data.message || "Draft change request deleted successfully.")
+    } catch (error) {
+      console.error("Failed to delete change request:", error)
+      setMessage(
+        error instanceof Error ? error.message : "Failed to delete change request."
+      )
+    } finally {
+      setActionLoading(null)
     }
   }
 
@@ -734,7 +1255,7 @@ export default function RequirementsDocumentPage() {
     }
 
     try {
-      setLoading(true)
+      setActionLoading(`delete-requirement-${requirementToDelete.id}`)
       setMessage("")
 
       const res = await fetch(
@@ -753,15 +1274,32 @@ export default function RequirementsDocumentPage() {
         return
       }
 
+      setRequirements((prev) =>
+        prev.filter((requirement) => requirement.id !== requirementToDelete.id)
+      )
+
+      setChangeRequests((prev) =>
+        prev.filter((changeRequest) => changeRequest.item_id !== requirementToDelete.id)
+      )
+
+      setDocumentSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              requirement_count: Math.max(prev.requirement_count - 1, 0),
+              updated_at: new Date().toISOString(),
+            }
+          : prev
+      )
+
       setRequirementToDelete(null)
       setSelectedRequirementDetails(null)
-
-      await fetchData()
+      setMessage(data.message || "Requirement deleted successfully.")
     } catch (error) {
       console.error("Failed to delete requirement:", error)
       setMessage("Failed to delete requirement")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -774,7 +1312,7 @@ export default function RequirementsDocumentPage() {
     }
 
     try {
-      setLoading(true)
+      setActionLoading("submit-approval")
       setMessage("")
 
       const res = await fetch(
@@ -794,13 +1332,13 @@ export default function RequirementsDocumentPage() {
       }
 
       setApprovalSummary(data.approval_summary || null)
-
-      await fetchData()
+      updateDocumentStatus("For Approval")
+      setMessage(data.message || "Requirement document submitted for approval.")
     } catch (error) {
       console.error("Failed to submit for approval:", error)
       setMessage("Failed to submit for approval")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -808,7 +1346,7 @@ export default function RequirementsDocumentPage() {
     if (!documentSummary) return
 
     try {
-      setLoading(true)
+      setActionLoading("approve-document")
       setMessage("")
 
       const res = await fetch(
@@ -830,12 +1368,14 @@ export default function RequirementsDocumentPage() {
       setMessage(data.message || "Requirement document approved")
       setApprovalSummary(data.approval_summary || null)
 
-      await fetchData()
+      if (data.approval_summary?.is_fully_approved || data.document?.status === "Approved") {
+        updateDocumentStatus("Approved")
+      }
     } catch (error) {
       console.error("Failed to approve document:", error)
       setMessage("Failed to approve document")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -843,7 +1383,7 @@ export default function RequirementsDocumentPage() {
     if (!documentSummary) return
 
     try {
-      setLoading(true)
+      setActionLoading("reject-document")
       setMessage("")
 
       const res = await fetch(
@@ -869,13 +1409,12 @@ export default function RequirementsDocumentPage() {
       setApprovalSummary(data.approval_summary || null)
       setIsRejectModalOpen(false)
       setRejectionReason("")
-
-      await fetchData()
+      updateDocumentStatus("Rejected")
     } catch (error) {
       console.error("Failed to reject document:", error)
       setMessage("Failed to reject document")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -888,7 +1427,7 @@ export default function RequirementsDocumentPage() {
     }
 
     try {
-      setLoading(true)
+      setActionLoading("freeze-document")
       setMessage("")
 
       const res = await fetch(
@@ -907,13 +1446,13 @@ export default function RequirementsDocumentPage() {
         return
       }
 
+      updateDocumentStatus("Frozen")
       setMessage(data.message || "Requirement document frozen successfully")
-      await fetchData()
     } catch (error) {
       console.error("Failed to freeze document:", error)
       setMessage("Failed to freeze document")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -926,7 +1465,7 @@ export default function RequirementsDocumentPage() {
     }
 
     try {
-      setLoading(true)
+      setActionLoading("unfreeze-document")
       setMessage("")
 
       const res = await fetch(
@@ -945,13 +1484,13 @@ export default function RequirementsDocumentPage() {
         return
       }
 
+      updateDocumentStatus("Unfrozen")
       setMessage(data.message || "Requirement document unfrozen successfully")
-      await fetchData()
     } catch (error) {
       console.error("Failed to unfreeze document:", error)
       setMessage("Failed to unfreeze document")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -964,7 +1503,7 @@ export default function RequirementsDocumentPage() {
     }
 
     try {
-      setLoading(true)
+      setActionLoading(`create-version-${changeType}`)
       setMessage("")
 
       const res = await fetch(
@@ -991,7 +1530,7 @@ export default function RequirementsDocumentPage() {
       console.error("Failed to create new version:", error)
       setMessage("Failed to create new version")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
       setIsVersionModalOpen(false)
     }
   }
@@ -1054,7 +1593,7 @@ export default function RequirementsDocumentPage() {
     }
 
     try {
-      setLoading(true)
+      setActionLoading("save-comment")
       setMessage("")
 
       const res = await fetch(
@@ -1076,15 +1615,44 @@ export default function RequirementsDocumentPage() {
         return
       }
 
-      setNewComment("")
+      const savedComment = data.comment || null
 
-      await fetchRequirementComments(selectedRequirementForComments.id)
-      await fetchData()
+      if (savedComment) {
+        setComments((prev) => [savedComment, ...prev])
+      } else {
+        await fetchRequirementComments(selectedRequirementForComments.id)
+      }
+
+      setRequirements((prev) =>
+        prev.map((requirement) =>
+          requirement.id === selectedRequirementForComments.id
+            ? {
+                ...requirement,
+                comment_count: (requirement.comment_count || 0) + 1,
+              }
+            : requirement
+        )
+      )
+
+      setSelectedRequirementDetails((prev) =>
+        prev && prev.summary.id === selectedRequirementForComments.id
+          ? {
+              ...prev,
+              summary: {
+                ...prev.summary,
+                comment_count: (prev.summary.comment_count || 0) + 1,
+              },
+            }
+          : prev
+      )
+
+      setNewComment("")
+      setMessage(data.message || "Comment added successfully.")
     } catch (error) {
       console.error("Failed to add comment:", error)
       setMessage("Failed to add comment")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -1092,7 +1660,7 @@ export default function RequirementsDocumentPage() {
     if (!documentSummary || !selectedRequirementForComments) return
 
     try {
-      setLoading(true)
+      setActionLoading(`delete-comment-${comment.id}`)
       setMessage("")
 
       const res = await fetch(
@@ -1111,13 +1679,37 @@ export default function RequirementsDocumentPage() {
         return
       }
 
-      await fetchRequirementComments(selectedRequirementForComments.id)
-      await fetchData()
+      setComments((prev) => prev.filter((item) => item.id !== comment.id))
+
+      setRequirements((prev) =>
+        prev.map((requirement) =>
+          requirement.id === selectedRequirementForComments.id
+            ? {
+                ...requirement,
+                comment_count: Math.max((requirement.comment_count || 0) - 1, 0),
+              }
+            : requirement
+        )
+      )
+
+      setSelectedRequirementDetails((prev) =>
+        prev && prev.summary.id === selectedRequirementForComments.id
+          ? {
+              ...prev,
+              summary: {
+                ...prev.summary,
+                comment_count: Math.max((prev.summary.comment_count || 0) - 1, 0),
+              },
+            }
+          : prev
+      )
+
+      setMessage(data.message || "Comment deleted successfully.")
     } catch (error) {
       console.error("Failed to delete comment:", error)
       setMessage("Failed to delete comment")
     } finally {
-      setLoading(false)
+      setActionLoading(null)
     }
   }
 
@@ -1141,14 +1733,8 @@ export default function RequirementsDocumentPage() {
     )
   }
 
-  if (fetching) {
-    return (
-      <section className="rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border md:p-8">
-        <div className="rounded-2xl bg-background p-8 text-center text-muted-foreground ring-1 ring-border">
-          Loading requirement document...
-        </div>
-      </section>
-    )
+  if (!documentSummary && fetching) {
+    return null
   }
 
   if (!documentSummary) {
@@ -1219,6 +1805,14 @@ export default function RequirementsDocumentPage() {
           {getStatusDescription(documentSummary.status)}
         </p>
 
+        {canRequestChange && draftChangeRequestCount > 0 && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            You have {draftChangeRequestCount} draft change request
+            {draftChangeRequestCount > 1 ? "s" : ""} ready for submission.
+            Submit them together after logging all affected requirements.
+          </div>
+        )}
+
         <div className="mt-6 flex flex-wrap gap-2">
           {(documentSummary.status === "Draft" ||
             documentSummary.status === "Rejected") &&
@@ -1227,13 +1821,15 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={submitForApproval}
-                disabled={loading}
+                disabled={isActionLoading("submit-approval")}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
                 <FileCheck className="h-4 w-4" />
-                {documentSummary.status === "Rejected"
-                  ? "Resubmit for Approval"
-                  : "Submit for Approval"}
+                {isActionLoading("submit-approval")
+                  ? "Submitting..."
+                  : documentSummary.status === "Rejected"
+                    ? "Resubmit for Approval"
+                    : "Submit for Approval"}
               </button>
             )}
 
@@ -1254,11 +1850,13 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={approveDocument}
-                disabled={loading}
+                disabled={isActionLoading("approve-document")}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
                 <CheckCircle className="h-4 w-4" />
-                Approve Document
+                {isActionLoading("approve-document")
+                  ? "Approving..."
+                  : "Approve Requirements"}
               </button>
             )}
 
@@ -1267,7 +1865,7 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={() => setIsRejectModalOpen(true)}
-                disabled={loading}
+                disabled={isActionLoading("reject-document")}
                 className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
               >
                 <XCircle className="h-4 w-4" />
@@ -1279,7 +1877,7 @@ export default function RequirementsDocumentPage() {
             approvalSummary?.current_user_has_approved && (
               <span className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700">
                 <CheckCircle className="h-4 w-4" />
-                You already approved this document
+                You already approved this requirements
               </span>
             )}
 
@@ -1287,7 +1885,7 @@ export default function RequirementsDocumentPage() {
             approvalSummary?.current_user_has_rejected && (
               <span className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700">
                 <XCircle className="h-4 w-4" />
-                You already rejected this document
+                You already rejected this requirements
               </span>
             )}
 
@@ -1297,11 +1895,13 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={freezeDocument}
-                disabled={loading}
+                disabled={isActionLoading("freeze-document")}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
                 <Snowflake className="h-4 w-4" />
-                Freeze Document
+                {isActionLoading("freeze-document")
+                  ? "Freezing..."
+                  : "Freeze Document"}
               </button>
             )}
 
@@ -1311,11 +1911,13 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={unfreezeDocument}
-                disabled={loading}
+                disabled={isActionLoading("unfreeze-document")}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
                 <Unlock className="h-4 w-4" />
-                Unfreeze Document
+                {isActionLoading("unfreeze-document")
+                  ? "Unfreezing..."
+                  : "Unfreeze Document"}
               </button>
             )}
 
@@ -1331,6 +1933,20 @@ export default function RequirementsDocumentPage() {
                 Edit
               </button>
             )}
+
+          {!permissionLoading && canRequestChange && draftChangeRequestCount > 0 && (
+            <button
+              type="button"
+              onClick={submitChangeRequests}
+              disabled={isActionLoading("submit-change-requests")}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              <Send className="h-4 w-4" />
+              {isActionLoading("submit-change-requests")
+                ? "Submitting..."
+                : "Submit Change Requests"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1363,13 +1979,29 @@ export default function RequirementsDocumentPage() {
                   )}
               </button>
 
+              {canRequestChangeForDocument && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    openChangeRequestModal(selectedRequirementDetails.summary)
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  Request Change
+                </button>
+              )}
+
               {canEditRequirement && (
                 <button
                   type="button"
                   onClick={() =>
                     openEditRequirementModal(selectedRequirementDetails.summary.id)
                   }
-                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+                  disabled={isActionLoading(
+                    `load-requirement-${selectedRequirementDetails.summary.id}`
+                  )}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
                 >
                   <Pencil className="h-4 w-4" />
                   Edit
@@ -1502,94 +2134,161 @@ export default function RequirementsDocumentPage() {
                     <th className="px-4 py-3 font-medium">Priority</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">Comments</th>
+                    {canRequestChange && (
+                      <th className="px-4 py-3 font-medium">Change Requests</th>
+                    )}
                     <th className="px-4 py-3 font-medium">Date Modified</th>
-                    <th className="w-52 px-4 py-3 font-medium">Actions</th>
+                    <th className="w-64 px-4 py-3 font-medium">Actions</th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {requirements.map((requirement) => (
-                    <tr
-                      key={requirement.id}
-                      className="border-t border-border hover:bg-muted/30"
-                    >
-                      <td className="px-4 py-3 font-medium text-foreground">
-                        {requirement.requirement_code}
-                      </td>
+                  {requirements.map((requirement) => {
+                    const relatedChangeRequests = canRequestChange
+                      ? changeRequestsByRequirementId.get(requirement.id) || []
+                      : []
 
-                      <td className="px-4 py-3 text-foreground">
-                        {requirement.title || "-"}
-                      </td>
+                    const requirementDraftCount = relatedChangeRequests.filter(
+                      (changeRequest) => changeRequest.status === "Draft"
+                    ).length
 
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {requirement.priority || "-"}
-                      </td>
+                    const requirementSubmittedCount = relatedChangeRequests.filter(
+                      (changeRequest) => changeRequest.status === "Submitted"
+                    ).length
 
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {requirement.status || "-"}
-                      </td>
+                    return (
+                      <tr
+                        key={requirement.id}
+                        className="border-t border-border hover:bg-muted/30"
+                      >
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          {requirement.requirement_code}
+                        </td>
 
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {requirement.comment_count || 0}
-                      </td>
+                        <td className="px-4 py-3 text-foreground">
+                          {requirement.title || "-"}
+                        </td>
 
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {formatDate(requirement.updated_at)}
-                      </td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {requirement.priority || "-"}
+                        </td>
 
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openRequirementDetails(requirement.id)}
-                            className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                            title="View Requirement"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {requirement.status || "-"}
+                        </td>
 
-                          <button
-                            type="button"
-                            onClick={() => openCommentsDrawer(requirement)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-2 text-foreground hover:bg-muted"
-                            title="View comments"
-                          >
-                            <MessageSquare className="h-4 w-4" />
-                            {requirement.comment_count &&
-                              requirement.comment_count > 0 && (
-                                <span className="text-xs">
-                                  {requirement.comment_count}
-                                </span>
-                              )}
-                          </button>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {requirement.comment_count || 0}
+                        </td>
 
-                          {canEditRequirement && (
+                        {canRequestChange && (
+                          <td className="px-4 py-3 text-muted-foreground">
+                            {relatedChangeRequests.length === 0 ? (
+                              "-"
+                            ) : (
+                              <div className="flex flex-wrap items-center gap-2">
+                                {requirementDraftCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openChangeRequestDetailsModal(requirement)
+                                    }
+                                    className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                                    title="View draft change request"
+                                  >
+                                    {requirementDraftCount} draft
+                                  </button>
+                                )}
+
+                                {requirementSubmittedCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openChangeRequestDetailsModal(requirement)
+                                    }
+                                    className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                                    title="View submitted change request"
+                                  >
+                                    {requirementSubmittedCount} submitted
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        )}
+
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {formatDate(requirement.updated_at)}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
                             <button
                               type="button"
-                              onClick={() =>
-                                openEditRequirementModal(requirement.id)
-                              }
+                              onClick={() => openRequirementDetails(requirement.id)}
                               className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                              title="Edit Requirement"
+                              title="View Requirement"
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Eye className="h-4 w-4" />
                             </button>
-                          )}
 
-                          {canDeleteRequirement && (
                             <button
                               type="button"
-                              onClick={() => setRequirementToDelete(requirement)}
-                              className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                              title="Delete Requirement"
+                              onClick={() => openCommentsDrawer(requirement)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-2 text-foreground hover:bg-muted"
+                              title="View comments"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <MessageSquare className="h-4 w-4" />
+                              {requirement.comment_count &&
+                                requirement.comment_count > 0 && (
+                                  <span className="text-xs">
+                                    {requirement.comment_count}
+                                  </span>
+                                )}
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+
+                            {canRequestChangeForDocument && (
+                              <button
+                                type="button"
+                                onClick={() => openChangeRequestModal(requirement)}
+                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
+                                title="Request Change"
+                              >
+                                <ClipboardList className="h-4 w-4" />
+                              </button>
+                            )}
+
+                            {canEditRequirement && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openEditRequirementModal(requirement.id)
+                                }
+                                disabled={isActionLoading(
+                                  `load-requirement-${requirement.id}`
+                                )}
+                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:opacity-60"
+                                title="Edit Requirement"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            )}
+
+                            {canDeleteRequirement && (
+                              <button
+                                type="button"
+                                onClick={() => setRequirementToDelete(requirement)}
+                                className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                                title="Delete Requirement"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1629,17 +2328,403 @@ export default function RequirementsDocumentPage() {
 
               <button
                 type="button"
-                disabled={loading}
+                disabled={
+                  isActionLoading("create-requirement") ||
+                  Boolean(
+                    editingRequirementId &&
+                      isActionLoading(`save-requirement-${editingRequirementId}`)
+                  )
+                }
                 onClick={saveRequirement}
                 className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
-                {loading
-                  ? "Saving..."
-                  : editingRequirementId
-                    ? "Update Requirement"
+                {editingRequirementId
+                  ? isActionLoading(`save-requirement-${editingRequirementId}`)
+                    ? "Updating..."
+                    : "Update Requirement"
+                  : isActionLoading("create-requirement")
+                    ? "Saving..."
                     : "Create Requirement"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {changeRequestModalOpen && selectedRequirementForChange && canRequestChangeForDocument && (
+        <div className="fixed inset-0 z-[90] overflow-y-auto bg-black/40 p-4">
+          <div className="mx-auto max-w-3xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              Log Stakeholder Change Request
+            </h3>
+
+            <div className="mt-4 rounded-xl border border-border bg-background p-4">
+              <p className="text-sm font-medium text-muted-foreground">
+                Selected Requirement
+              </p>
+
+              <p className="mt-1 font-semibold text-foreground">
+                {selectedRequirementForChange.requirement_code} ·{" "}
+                {selectedRequirementForChange.title || "Untitled Requirement"}
+              </p>
+
+              {selectedRequirementForChange.description && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {selectedRequirementForChange.description}
+                </p>
+              )}
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-medium text-foreground">
+                  Stakeholder / Requester Name
+                </span>
+                <input
+                  type="text"
+                  value={changeRequestForm.requested_by_name}
+                  onChange={(event) =>
+                    handleChangeRequestFormChange(
+                      "requested_by_name",
+                      event.target.value
+                    )
+                  }
+                  className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Enter stakeholder name"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-foreground">
+                  Date Requested
+                </span>
+                <input
+                  type="date"
+                  value={changeRequestForm.requested_date}
+                  onChange={(event) =>
+                    handleChangeRequestFormChange(
+                      "requested_date",
+                      event.target.value
+                    )
+                  }
+                  className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-foreground">
+                  Change Type
+                </span>
+                <select
+                  value={changeRequestForm.change_type}
+                  onChange={(event) =>
+                    handleChangeRequestFormChange("change_type", event.target.value)
+                  }
+                  className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="Modify">Modify</option>
+                  <option value="Add">Add</option>
+                  <option value="Remove">Remove</option>
+                  <option value="Clarify">Clarify</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-foreground">
+                  Priority
+                </span>
+                <select
+                  value={changeRequestForm.priority}
+                  onChange={(event) =>
+                    handleChangeRequestFormChange("priority", event.target.value)
+                  }
+                  className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="Low">Low</option>
+                  <option value="Medium">Medium</option>
+                  <option value="High">High</option>
+                  <option value="Critical">Critical</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-foreground">
+                Intended Change
+              </span>
+              <textarea
+                value={changeRequestForm.intended_change}
+                onChange={(event) =>
+                  handleChangeRequestFormChange(
+                    "intended_change",
+                    event.target.value
+                  )
+                }
+                className="mt-2 min-h-28 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Describe the intended change for this requirement."
+              />
+            </label>
+
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-foreground">
+                Reason / Justification
+              </span>
+              <textarea
+                value={changeRequestForm.reason}
+                onChange={(event) =>
+                  handleChangeRequestFormChange("reason", event.target.value)
+                }
+                className="mt-2 min-h-24 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Explain why this change is needed."
+              />
+            </label>
+
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-foreground">
+                Remarks
+              </span>
+              <textarea
+                value={changeRequestForm.remarks}
+                onChange={(event) =>
+                  handleChangeRequestFormChange("remarks", event.target.value)
+                }
+                className="mt-2 min-h-20 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Optional notes from the BA."
+              />
+            </label>
+
+            <label className="mt-4 block rounded-xl border border-dashed border-border bg-background p-4">
+              <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+                <Upload className="h-4 w-4" />
+                Signed Change Request Form
+              </span>
+
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                onChange={(event) =>
+                  setSignedChangeRequestFile(event.target.files?.[0] || null)
+                }
+                className="mt-3 block w-full text-sm text-muted-foreground"
+              />
+
+              <p className="mt-2 text-xs text-muted-foreground">
+                Upload the signed request form issued by the stakeholder. Accepted files: PDF, DOC, DOCX, PNG, JPG, JPEG.
+              </p>
+            </label>
+
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeChangeRequestModal}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isActionLoading("save-change-request")}
+                onClick={saveChangeRequestDraft}
+                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                {isActionLoading("save-change-request")
+                  ? "Saving..."
+                  : "Save Change Request Draft"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedRequirementForChangeRequestDetails && canRequestChange && (
+        <div className="fixed inset-0 z-[90] overflow-y-auto bg-black/40 p-4">
+          <div className="mx-auto max-w-3xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">
+                  Change Request Details
+                </h3>
+
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {selectedRequirementForChangeRequestDetails.requirement_code} ·{" "}
+                  {selectedRequirementForChangeRequestDetails.title || "-"}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeChangeRequestDetailsModal}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {selectedRequirementChangeRequests.length === 0 ? (
+                <div className="rounded-xl border border-border bg-background p-4 text-sm text-muted-foreground">
+                  No change requests found for this requirement.
+                </div>
+              ) : (
+                selectedRequirementChangeRequests.map((changeRequest) => (
+                  <div
+                    key={changeRequest.id}
+                    className="rounded-xl border border-border bg-background p-4"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <span
+                          className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${getChangeRequestStatusClasses(
+                            changeRequest.status
+                          )}`}
+                        >
+                          {changeRequest.status}
+                        </span>
+
+                        <p className="mt-3 text-sm text-muted-foreground">
+                          Requested by
+                        </p>
+                        <p className="font-medium text-foreground">
+                          {changeRequest.requested_by_name || "-"}
+                        </p>
+                      </div>
+
+                      {changeRequest.status === "Draft" &&
+                        canRequestChange &&
+                        changeRequest.can_delete !== false && (
+                          <button
+                            type="button"
+                            onClick={() => deleteDraftChangeRequest(changeRequest)}
+                            disabled={isActionLoading(
+                              `delete-change-request-${changeRequest.id}`
+                            )}
+                            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {isActionLoading(`delete-change-request-${changeRequest.id}`)
+                              ? "Deleting..."
+                              : "Delete Draft"}
+                          </button>
+                        )}
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Date Requested
+                        </p>
+                        <p className="mt-1 text-sm text-foreground">
+                          {formatDate(changeRequest.requested_date)}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Change Type
+                        </p>
+                        <p className="mt-1 text-sm text-foreground">
+                          {changeRequest.change_type || "-"}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Priority
+                        </p>
+                        <p className="mt-1 text-sm text-foreground">
+                          {changeRequest.priority || "-"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Intended Change
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground">
+                        {changeRequest.intended_change || "-"}
+                      </p>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Reason / Justification
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground">
+                        {changeRequest.reason || "-"}
+                      </p>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Remarks
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground">
+                        {changeRequest.remarks || "-"}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Signed Form
+                        </p>
+
+                        {changeRequest.stakeholder_form_filename &&
+                        changeRequest.can_view_file !== false ? (
+                          <button
+                            type="button"
+                            onClick={() => viewSignedChangeRequestFile(changeRequest)}
+                            disabled={isActionLoading(
+                              `view-change-request-file-${changeRequest.id}`
+                            )}
+                            className="mt-1 inline-flex max-w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
+                          >
+                            <Eye className="h-4 w-4 shrink-0" />
+                            <span className="truncate">
+                              {isActionLoading(`view-change-request-file-${changeRequest.id}`)
+                                ? "Opening..."
+                                : changeRequest.stakeholder_form_filename}
+                            </span>
+                          </button>
+                        ) : (
+                          <p className="mt-1 text-sm text-foreground">-</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Submitted At
+                        </p>
+                        <p className="mt-1 text-sm text-foreground">
+                          {changeRequest.submitted_at
+                            ? formatDateTime(changeRequest.submitted_at)
+                            : "Not submitted"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {draftChangeRequestCount > 0 && canRequestChange && (
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="button"
+                  onClick={submitChangeRequests}
+                  disabled={isActionLoading("submit-change-requests")}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" />
+                  {isActionLoading("submit-change-requests")
+                    ? "Submitting..."
+                    : "Submit Change Requests"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1671,10 +2756,12 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={confirmDeleteRequirement}
-                disabled={loading}
+                disabled={isActionLoading(`delete-requirement-${requirementToDelete.id}`)}
                 className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
               >
-                {loading ? "Deleting..." : "Confirm Delete"}
+                {isActionLoading(`delete-requirement-${requirementToDelete.id}`)
+                  ? "Deleting..."
+                  : "Confirm Delete"}
               </button>
             </div>
           </div>
@@ -1739,7 +2826,7 @@ export default function RequirementsDocumentPage() {
                         <button
                           type="button"
                           onClick={() => deleteRequirementComment(comment)}
-                          disabled={loading}
+                          disabled={isActionLoading(`delete-comment-${comment.id}`)}
                           className="rounded-lg border border-red-200 p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-60"
                           title="Delete comment"
                         >
@@ -1769,11 +2856,11 @@ export default function RequirementsDocumentPage() {
                 <button
                   type="button"
                   onClick={saveRequirementComment}
-                  disabled={loading || !newComment.trim()}
+                  disabled={isActionLoading("save-comment") || !newComment.trim()}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
                   <MessageSquare className="h-4 w-4" />
-                  {loading ? "Saving..." : "Add Comment"}
+                  {isActionLoading("save-comment") ? "Saving..." : "Add Comment"}
                 </button>
               </div>
             </div>
@@ -1936,10 +3023,12 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={rejectDocument}
-                disabled={loading}
+                disabled={isActionLoading("reject-document")}
                 className="rounded-lg bg-destructive px-4 py-2 text-white hover:bg-destructive/90 disabled:opacity-60"
               >
-                {loading ? "Rejecting..." : "Confirm Reject"}
+                {isActionLoading("reject-document")
+                  ? "Rejecting..."
+                  : "Confirm Reject"}
               </button>
             </div>
           </div>
@@ -1962,10 +3051,14 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={() => createNewVersion("minor")}
-                disabled={loading}
+                disabled={isActionLoading("create-version-minor")}
                 className="w-full rounded-lg border border-border px-4 py-3 text-left hover:bg-muted disabled:opacity-60"
               >
-                <p className="font-medium text-foreground">Minor Update</p>
+                <p className="font-medium text-foreground">
+                  {isActionLoading("create-version-minor")
+                    ? "Creating Minor Version..."
+                    : "Minor Update"}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Creates the next minor version, for example 1.0 to 1.1.
                 </p>
@@ -1974,10 +3067,14 @@ export default function RequirementsDocumentPage() {
               <button
                 type="button"
                 onClick={() => createNewVersion("major")}
-                disabled={loading}
+                disabled={isActionLoading("create-version-major")}
                 className="w-full rounded-lg border border-border px-4 py-3 text-left hover:bg-muted disabled:opacity-60"
               >
-                <p className="font-medium text-foreground">Major Update</p>
+                <p className="font-medium text-foreground">
+                  {isActionLoading("create-version-major")
+                    ? "Creating Major Version..."
+                    : "Major Update"}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Creates the next major version, for example 1.0 to 2.0.
                 </p>

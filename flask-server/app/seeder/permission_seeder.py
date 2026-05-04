@@ -236,6 +236,12 @@ PERMISSIONS = [
         "module": "requirements",
         "description": "Allows user to add comments on individual requirements.",
     },
+    {
+        "key": "requirements.request_change",
+        "label": "Request Requirement Changes",
+        "module": "requirements",
+        "description": "Allows user to log and submit change requests for individual requirements.",
+    },
 
     # Notifications
     {

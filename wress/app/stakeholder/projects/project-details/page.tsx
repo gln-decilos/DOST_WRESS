@@ -1442,7 +1442,7 @@ export default function ProjectDetailsPageView() {
           }
           className={tabButtonClasses("stakeholders")}
         >
-          Stakeholders
+          Project Members & Stakeholders
         </button>
 
         <button
