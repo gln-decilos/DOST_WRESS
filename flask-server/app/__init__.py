@@ -62,6 +62,7 @@ def create_app():
     from app.models.project_stakeholder import ProjectStakeholder
 
     from app.models.user import User
+    from app.models.password_reset_token import PasswordResetToken
     from app.models.role import Role
     from app.models.permission import Permission
     from app.models.user_roles import UserRole
