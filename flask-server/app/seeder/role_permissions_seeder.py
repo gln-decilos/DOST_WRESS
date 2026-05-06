@@ -5,73 +5,16 @@ from app.models.role_permissions import RolePermission
 
 
 ROLE_PERMISSION_MAP = {
-    "System Admin": "ALL",
-
-    "Organization Admin": [
-        "dashboard.view",
-
-        "users.view",
-        "users.create",
-        "users.edit",
-        "users.delete",
-
-        "roles.view",
-        "roles.create",
-        "roles.edit",
-        "roles.delete",
-
-        "organization.view",
-        "organization.create",
-        "organization.edit",
-        "organization.delete",
-
-        "project.view",
-        "project.create",
-        "project.edit",
-        "project.delete",
-
-        "project_members.view",
-        "project_members.manage",
-
-        "vision_scope.view",
-        "vision_scope.create",
-        "vision_scope.edit",
-        "vision_scope.delete",
-
-        "templates.view",
-        "templates.create",
-        "templates.edit",
-        "templates.delete",
-
-        "requirements.view",
-        "requirements.create",
-        "requirements.edit",
-        "requirements.delete",
-        "requirements.submit_approval",
-        "requirements.approve",
-        "requirements.reject",
-        "requirements.freeze",
-        "requirements.comment",
-        "requirements.request_change",
-
-        "notifications.view",
-        "notifications.manage",
-    ],
-
     "Project Manager": [
         "dashboard.view",
-
         "project.view",
         "project.edit",
-
         "project_members.view",
         "project_members.manage",
-
         "vision_scope.view",
         "vision_scope.create",
         "vision_scope.edit",
         "vision_scope.delete",
-
         "requirements.view",
         "requirements.create",
         "requirements.edit",
@@ -82,22 +25,16 @@ ROLE_PERMISSION_MAP = {
         "requirements.freeze",
         "requirements.comment",
         "requirements.request_change",
-
         "notifications.view",
     ],
-
     "Business Analyst": [
         "dashboard.view",
-
         "project.view",
-
         "project_members.view",
-
         "vision_scope.view",
         "vision_scope.create",
         "vision_scope.edit",
         "vision_scope.delete",
-
         "requirements.view",
         "requirements.create",
         "requirements.edit",
@@ -106,89 +43,50 @@ ROLE_PERMISSION_MAP = {
         "requirements.freeze",
         "requirements.comment",
         "requirements.request_change",
-
         "notifications.view",
     ],
-
     "Developer": [
         "dashboard.view",
-
         "project.view",
-
         "project_members.view",
-
         "vision_scope.view",
-
         "requirements.view",
         "requirements.approve",
         "requirements.reject",
         "requirements.comment",
-
         "notifications.view",
     ],
-
-    "QA Tester": [
+    "Tester": [
         "dashboard.view",
-
         "project.view",
-
         "project_members.view",
-
         "vision_scope.view",
-
         "requirements.view",
         "requirements.approve",
         "requirements.reject",
         "requirements.comment",
-
         "notifications.view",
     ],
-
     "Stakeholder": [
         "dashboard.view",
-
         "project.view",
-
         "project_members.view",
-
         "vision_scope.view",
-
         "requirements.view",
         "requirements.approve",
         "requirements.reject",
         "requirements.comment",
-
-        "notifications.view",
-    ],
-
-    "Viewer": [
-        "dashboard.view",
-
-        "project.view",
-
-        "project_members.view",
-
-        "vision_scope.view",
-
-        "requirements.view",
-
         "notifications.view",
     ],
 }
 
 
 def get_permission_ids(permission_keys):
-    if permission_keys == "ALL":
-        permissions = Permission.query.all()
-    else:
-        permissions = Permission.query.filter(
-            Permission.key.in_(permission_keys)
-        ).all()
+    permissions = Permission.query.filter(
+        Permission.key.in_(permission_keys)
+    ).all()
 
-    return {
-        permission.key: permission.id
-        for permission in permissions
-    }
+    return {p.key: p.id for p in permissions}
 
 
 def create_role_permission(role_id, permission_id):
@@ -204,12 +102,13 @@ def create_role_permission(role_id, permission_id):
         role_id=role_id,
         permission_id=permission_id
     ))
-
     return True
 
 
 def seed_role_permissions():
     print("Seeding role permissions...")
+
+    organization_id = 1
 
     created_count = 0
     skipped_count = 0
@@ -217,7 +116,11 @@ def seed_role_permissions():
     missing_permissions = []
 
     for role_name, permission_keys in ROLE_PERMISSION_MAP.items():
-        role = Role.query.filter_by(name=role_name).first()
+
+        role = Role.query.filter_by(
+            name=role_name,
+            organization_id=organization_id
+        ).first()
 
         if not role:
             missing_roles.append(role_name)
@@ -225,22 +128,14 @@ def seed_role_permissions():
 
         permission_map = get_permission_ids(permission_keys)
 
-        if permission_keys == "ALL":
-            target_permission_keys = list(permission_map.keys())
-        else:
-            target_permission_keys = permission_keys
-
-        for permission_key in target_permission_keys:
-            permission_id = permission_map.get(permission_key)
+        for key in permission_keys:
+            permission_id = permission_map.get(key)
 
             if not permission_id:
-                missing_permissions.append(permission_key)
+                missing_permissions.append(key)
                 continue
 
-            created = create_role_permission(
-                role_id=role.id,
-                permission_id=permission_id
-            )
+            created = create_role_permission(role.id, permission_id)
 
             if created:
                 created_count += 1
@@ -249,19 +144,16 @@ def seed_role_permissions():
 
     db.session.commit()
 
-    unique_missing_roles = sorted(set(missing_roles))
-    unique_missing_permissions = sorted(set(missing_permissions))
-
     print("Role permissions seeded successfully.")
     print(f"Created: {created_count}")
     print(f"Skipped: {skipped_count}")
 
-    if unique_missing_roles:
+    if missing_roles:
         print("Missing roles:")
-        for role_name in unique_missing_roles:
-            print(f"- {role_name}")
+        for r in sorted(set(missing_roles)):
+            print(f"- {r}")
 
-    if unique_missing_permissions:
+    if missing_permissions:
         print("Missing permissions:")
-        for permission_key in unique_missing_permissions:
-            print(f"- {permission_key}")
+        for p in sorted(set(missing_permissions)):
+            print(f"- {p}")
