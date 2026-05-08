@@ -82,6 +82,8 @@ type RequirementItemSummary = {
   sort_order: number
   created_by?: number | null
   comment_count?: number
+  change_log_count?: number
+  approval_summary?: RequirementApprovalSummary | null
   created_at: string
   updated_at: string
 }
@@ -125,6 +127,40 @@ type RequirementItemDetailsResponse = {
   template: DocumentTemplate | null
 }
 
+type RequirementApprovalSummary = {
+  item_id: number
+  document_id: number
+  status: string
+  submitted: boolean
+  approved: boolean
+  rejected: boolean
+  total_required: number
+  approved_count: number
+  rejected_count: number
+  pending_count: number
+  is_fully_approved: boolean
+  has_rejection_votes?: boolean
+  is_decision_complete?: boolean
+  current_user_is_required_approver: boolean
+  current_user_has_approved: boolean
+  current_user_has_rejected: boolean
+  current_user_can_approve: boolean
+  current_user_can_reject: boolean
+  note: string
+  approvers: Array<{
+    user_id: number
+    full_name: string
+    email: string
+    status: string
+    review_requested_at?: string | null
+    review_due_at?: string | null
+    approved_at?: string | null
+    rejected_at?: string | null
+    auto_approved_at?: string | null
+    rejection_reason?: string | null
+  }>
+}
+
 type ApprovalSummary = {
   document_id: number
   version: string
@@ -138,6 +174,7 @@ type ApprovalSummary = {
   rejected_count: number
   pending_count: number
   is_fully_approved: boolean
+  has_rejection_votes?: boolean
   current_user_is_submitter: boolean
   current_user_is_required_approver: boolean
   current_user_has_approved: boolean
@@ -145,13 +182,17 @@ type ApprovalSummary = {
   current_user_can_approve: boolean
   current_user_can_reject: boolean
   note: string
+  requirements?: RequirementApprovalSummary[]
   approvers: Array<{
     user_id: number
     full_name: string
     email: string
     status: string
+    review_requested_at?: string | null
+    review_due_at?: string | null
     approved_at?: string | null
     rejected_at?: string | null
+    auto_approved_at?: string | null
     rejection_reason?: string | null
   }>
 }
@@ -175,12 +216,39 @@ type RequirementComment = {
   updated_at?: string | null
 }
 
+type ChangeRequestReviewDecision = {
+  user_id: number
+  full_name: string
+  email: string
+  status: "Pending" | "Proceed" | "Declined" | string
+  decided_at?: string | null
+  note?: string | null
+}
+
+type ChangeRequestReviewSummary = {
+  total_required: number
+  proceed_count: number
+  declined_count: number
+  pending_count: number
+  is_decision_complete: boolean
+  final_status?: "Proceed" | "Declined" | string | null
+  current_user_status?: "Pending" | "Proceed" | "Declined" | string | null
+  current_user_can_decide?: boolean
+}
+
 type RequirementChangeRequest = {
   id: number
   project_id: number
   document_id: number
   item_id: number
-  status: "Draft" | "Submitted" | string
+  status:
+    | "Draft"
+    | "Submitted"
+    | "Impact Analysis Requested"
+    | "Stakeholder Review"
+    | "Proceed"
+    | "Declined"
+    | string
   requested_by_name: string
   requested_date?: string | null
   change_type: string
@@ -195,12 +263,57 @@ type RequirementChangeRequest = {
   created_by?: number | null
   submitted_by?: number | null
   submitted_at?: string | null
+  impact_analysis_filename?: string | null
+  impact_analysis_path?: string | null
+  impact_analysis_mime_type?: string | null
+  impact_analysis_size?: number | null
+  impact_analysis_uploaded_by?: number | null
+  impact_analysis_uploaded_at?: string | null
+  impact_analysis_notes?: string | null
+  review_days?: number | null
+  review_due_at?: string | null
+  review_decisions?: ChangeRequestReviewDecision[]
+  review_summary?: ChangeRequestReviewSummary | null
+  decided_at?: string | null
   created_at?: string | null
   updated_at?: string | null
   can_delete?: boolean
   can_view_file?: boolean
+  can_review_change_request?: boolean
+  can_upload_impact_analysis?: boolean
+  can_decide?: boolean
+  is_active?: boolean
   requirement?: RequirementItemSummary | null
   current_requirement_snapshot?: Partial<RequirementItemSummary> | null
+}
+
+type RequirementChangeLog = {
+  id: number
+  project_id: number
+  document_id: number
+  item_id: number
+  action: string
+  description?: string | null
+  before_snapshot?: any
+  after_snapshot?: any
+  changed_by?: number | null
+  actor_role?: string | null
+  user?: {
+    id: number
+    full_name: string
+    email: string
+    project_role?: string | null
+    role?: string | null
+  } | null
+  created_at?: string | null
+}
+
+type RequirementTraceabilityChange = {
+  field_key: string
+  field_label: string
+  before_value: string
+  after_value: string
+  change_type: "Added" | "Updated" | "Removed"
 }
 
 type ChangeRequestFormState = {
@@ -220,6 +333,8 @@ type RequirementPermissionState = {
   submitAllowed: boolean
   freezeAllowed: boolean
   requestChangeAllowed: boolean
+  reviewChangeRequestAllowed: boolean
+  decideChangeRequestAllowed: boolean
 }
 
 const API_BASE_URL = "http://localhost:5000/api/business-analyst"
@@ -334,15 +449,260 @@ function getApprovalStatusClasses(status: string) {
   }
 }
 
+function getApprovalDecisionStatus(summary?: RequirementApprovalSummary | null) {
+  if (!summary?.submitted) return "Not requested"
+
+  if (summary.pending_count > 0) return "Pending"
+
+  if (summary.rejected) return "Rejected"
+
+  if (summary.is_fully_approved) return "Approved"
+
+  return "Pending"
+}
+
+function getApprovalDecisionLabel(summary?: RequirementApprovalSummary | null) {
+  if (!summary?.submitted) return "Not requested"
+
+  if (summary.pending_count > 0 && summary.rejected_count > 0) {
+    return "Review in progress"
+  }
+
+  if (summary.pending_count > 0) return "Pending review"
+
+  if (summary.rejected) return "Rejected"
+
+  if (summary.is_fully_approved) return "Approved"
+
+  return "Pending review"
+}
+
 function getChangeRequestStatusClasses(status: string) {
   switch (status) {
     case "Draft":
+    case "Pending":
       return "border-amber-200 bg-amber-50 text-amber-700"
     case "Submitted":
+    case "Impact Analysis Requested":
       return "border-blue-200 bg-blue-50 text-blue-700"
+    case "Stakeholder Review":
+      return "border-purple-200 bg-purple-50 text-purple-700"
+    case "Proceed":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700"
+    case "Declined":
+      return "border-red-200 bg-red-50 text-red-700"
     default:
       return "border-border bg-background text-muted-foreground"
   }
+}
+
+function getChangeRequestDisplayStatus(status: string) {
+  switch (status) {
+    case "Submitted":
+    case "Impact Analysis Requested":
+      return "Impact Analysis Requested"
+    case "Stakeholder Review":
+      return "Sent to Stakeholders"
+    case "Proceed":
+      return "Approved to Proceed"
+    case "Declined":
+      return "Declined"
+    default:
+      return status || "-"
+  }
+}
+
+function getChangeRequestStakeholderStatusLabel(changeRequest: RequirementChangeRequest) {
+  const summary = changeRequest.review_summary
+  const currentUserStatus = summary?.current_user_status
+
+  if (changeRequest.status !== "Stakeholder Review") {
+    if (
+      changeRequest.status === "Impact Analysis Requested" ||
+      changeRequest.status === "Submitted"
+    ) {
+      if (changeRequest.can_upload_impact_analysis) {
+        return "Upload Impact Analysis Result"
+      }
+
+      if (changeRequest.can_review_change_request) {
+        return "For Impact Analysis Review"
+      }
+    }
+
+    return getChangeRequestDisplayStatus(changeRequest.status)
+  }
+
+  if (changeRequest.can_decide || currentUserStatus === "Pending") {
+    return "Decision Required"
+  }
+
+  if (currentUserStatus && currentUserStatus !== "Pending") {
+    return summary?.pending_count && summary.pending_count > 0
+      ? "Waiting for Other Stakeholders"
+      : "Decision Completed"
+  }
+
+  return "Sent to Stakeholders"
+}
+
+function getChangeRequestReviewSummaryLabel(changeRequest: RequirementChangeRequest) {
+  const summary = changeRequest.review_summary
+
+  if (!summary || !changeRequest.review_decisions?.length) {
+    if (changeRequest.status === "Stakeholder Review") return "Sent to stakeholders for decision"
+    if (changeRequest.status === "Impact Analysis Requested" || changeRequest.status === "Submitted") {
+      return "Waiting for impact analysis upload"
+    }
+    return "-"
+  }
+
+  if (changeRequest.status === "Stakeholder Review") {
+    return `${summary.proceed_count} proceed · ${summary.declined_count} declined · ${summary.pending_count} pending`
+  }
+
+  if (
+    changeRequest.status === "Impact Analysis Requested" ||
+    changeRequest.status === "Submitted"
+  ) {
+    if (changeRequest.can_upload_impact_analysis) {
+      return "Waiting for you to upload the impact analysis result"
+    }
+
+    if (changeRequest.can_review_change_request) {
+      return "Review the logged request before the external impact analysis meeting"
+    }
+  }
+
+  return `${summary.proceed_count} proceed · ${summary.declined_count} declined`
+}
+
+function getCurrentReviewerDecisionLabel(changeRequest: RequirementChangeRequest) {
+  const currentStatus = changeRequest.review_summary?.current_user_status
+
+  if (!currentStatus) return null
+
+  if (currentStatus === "Pending") return "Your stakeholder decision is required"
+
+  return `Your decision: ${getChangeRequestDisplayStatus(currentStatus)}`
+}
+
+function isActiveChangeRequestStatus(status: string) {
+  return [
+    "Draft",
+    "Submitted",
+    "Impact Analysis Requested",
+    "Stakeholder Review",
+  ].includes(status)
+}
+
+function formatTraceabilityFieldLabel(fieldKey: string) {
+  return fieldKey
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function normalizeSnapshotValues(snapshot: any): Record<string, string> {
+  if (!snapshot || typeof snapshot !== "object") return {}
+
+  const values = snapshot.values
+
+  if (!values || typeof values !== "object") return {}
+
+  return Object.entries(values).reduce<Record<string, string>>((acc, [key, value]) => {
+    acc[key] = value === null || value === undefined ? "" : String(value)
+    return acc
+  }, {})
+}
+
+function buildRequirementTraceabilityChanges(
+  log: RequirementChangeLog,
+  fieldLabelsByKey: Record<string, string>
+): RequirementTraceabilityChange[] {
+  const action = (log.action || "").toLowerCase()
+  const beforeValues = normalizeSnapshotValues(log.before_snapshot)
+  const afterValues = normalizeSnapshotValues(log.after_snapshot)
+
+  const hasBeforeSnapshot = Boolean(log.before_snapshot?.values)
+  const hasAfterSnapshot = Boolean(log.after_snapshot?.values)
+
+  if (!hasBeforeSnapshot && !hasAfterSnapshot) return []
+
+  let before = beforeValues
+  let after = afterValues
+
+  if (action === "created") {
+    before = {}
+    after = afterValues
+  } else if (action === "deleted") {
+    before = beforeValues
+    after = {}
+  } else if (!hasBeforeSnapshot || !hasAfterSnapshot) {
+    return []
+  }
+
+  const fieldKeys = Array.from(
+    new Set([...Object.keys(before), ...Object.keys(after)])
+  ).sort((a, b) => {
+    const labelA = fieldLabelsByKey[a] || formatTraceabilityFieldLabel(a)
+    const labelB = fieldLabelsByKey[b] || formatTraceabilityFieldLabel(b)
+    return labelA.localeCompare(labelB)
+  })
+
+  return fieldKeys.reduce<RequirementTraceabilityChange[]>((changes, fieldKey) => {
+    const beforeValue = before[fieldKey] || ""
+    const afterValue = after[fieldKey] || ""
+
+    if (beforeValue === afterValue) return changes
+
+    let changeType: RequirementTraceabilityChange["change_type"] = "Updated"
+
+    if (!beforeValue && afterValue) {
+      changeType = "Added"
+    } else if (beforeValue && !afterValue) {
+      changeType = "Removed"
+    }
+
+    changes.push({
+      field_key: fieldKey,
+      field_label: fieldLabelsByKey[fieldKey] || formatTraceabilityFieldLabel(fieldKey),
+      before_value: beforeValue,
+      after_value: afterValue,
+      change_type: changeType,
+    })
+
+    return changes
+  }, [])
+}
+
+function formatTraceabilityValue(value: string) {
+  return value && value.trim() ? value : "-"
+}
+
+function getTraceabilityChangeClasses(changeType: string) {
+  switch (changeType) {
+    case "Added":
+      return "bg-emerald-100 text-emerald-700"
+    case "Removed":
+      return "bg-red-100 text-red-700"
+    default:
+      return "bg-blue-100 text-blue-700"
+  }
+}
+
+function getRequirementLogActorLabel(log: RequirementChangeLog) {
+  const actorName =
+    log.user?.full_name ||
+    log.user?.email ||
+    (log.changed_by ? `User #${log.changed_by}` : "System")
+
+  const actorRole =
+    log.user?.project_role ||
+    log.user?.role ||
+    log.actor_role ||
+    null
+
+  return actorRole ? `${actorName} · ${actorRole}` : actorName
 }
 
 export default function RequirementsDocumentPage() {
@@ -372,6 +732,8 @@ export default function RequirementsDocumentPage() {
   const [canSubmitApproval, setCanSubmitApproval] = useState(false)
   const [canFreezeRequirements, setCanFreezeRequirements] = useState(false)
   const [canRequestChange, setCanRequestChange] = useState(false)
+  const [canReviewChangeRequest, setCanReviewChangeRequest] = useState(false)
+  const [canDecideChangeRequest, setCanDecideChangeRequest] = useState(false)
 
   const [requirementModalOpen, setRequirementModalOpen] = useState(false)
   const [editingRequirementId, setEditingRequirementId] =
@@ -389,8 +751,15 @@ export default function RequirementsDocumentPage() {
   const [approvalSummary, setApprovalSummary] =
     useState<ApprovalSummary | null>(null)
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false)
+  const [isSubmitApprovalModalOpen, setIsSubmitApprovalModalOpen] = useState(false)
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [rejectionReason, setRejectionReason] = useState("")
+  const [selectedRequirementIds, setSelectedRequirementIds] = useState<number[]>([])
+  const [reviewDays, setReviewDays] = useState("3")
+  const [selectedRequirementForLogs, setSelectedRequirementForLogs] =
+    useState<RequirementItemSummary | null>(null)
+  const [changeLogs, setChangeLogs] = useState<RequirementChangeLog[]>([])
+  const [changeLogsLoading, setChangeLogsLoading] = useState(false)
 
   const [commentDrawerOpen, setCommentDrawerOpen] = useState(false)
   const [selectedRequirementForComments, setSelectedRequirementForComments] =
@@ -400,6 +769,14 @@ export default function RequirementsDocumentPage() {
   const [newComment, setNewComment] = useState("")
 
   const [changeRequestModalOpen, setChangeRequestModalOpen] = useState(false)
+  const [isSubmitChangeRequestsModalOpen, setIsSubmitChangeRequestsModalOpen] =
+    useState(false)
+  const [impactAnalysisModalOpen, setImpactAnalysisModalOpen] = useState(false)
+  const [selectedChangeRequestForImpactAnalysis, setSelectedChangeRequestForImpactAnalysis] =
+    useState<RequirementChangeRequest | null>(null)
+  const [impactAnalysisFile, setImpactAnalysisFile] = useState<File | null>(null)
+  const [impactAnalysisNotes, setImpactAnalysisNotes] = useState("")
+  const [stakeholderReviewDays, setStakeholderReviewDays] = useState("3")
   const [selectedRequirementForChange, setSelectedRequirementForChange] =
     useState<RequirementItemSummary | null>(null)
   const [
@@ -410,6 +787,12 @@ export default function RequirementsDocumentPage() {
     useState<ChangeRequestFormState>(getInitialChangeRequestForm())
   const [signedChangeRequestFile, setSignedChangeRequestFile] =
     useState<File | null>(null)
+  const [changeRequestDecisionTarget, setChangeRequestDecisionTarget] =
+    useState<RequirementChangeRequest | null>(null)
+  const [changeRequestDecision, setChangeRequestDecision] = useState<
+    "Proceed" | "Declined"
+  >("Proceed")
+  const [changeRequestDecisionNote, setChangeRequestDecisionNote] = useState("")
 
   const isActionLoading = (action: string) => actionLoading === action
 
@@ -426,6 +809,9 @@ export default function RequirementsDocumentPage() {
       ["Approved", "Frozen", "Unfrozen"].includes(documentSummary.status)
   )
 
+  const canViewChangeRequests =
+    canRequestChange || canReviewChangeRequest || canDecideChangeRequest
+
   const draftChangeRequestCount = useMemo(() => {
     if (!canRequestChange) return 0
 
@@ -436,7 +822,7 @@ export default function RequirementsDocumentPage() {
   const changeRequestsByRequirementId = useMemo(() => {
     const grouped = new Map<number, RequirementChangeRequest[]>()
 
-    if (!canRequestChange) return grouped
+    if (!canViewChangeRequests) return grouped
 
     changeRequests.forEach((changeRequest) => {
       const current = grouped.get(changeRequest.item_id) || []
@@ -445,10 +831,22 @@ export default function RequirementsDocumentPage() {
     })
 
     return grouped
-  }, [canRequestChange, changeRequests])
+  }, [canViewChangeRequests, changeRequests])
+
+  const activeChangeRequestRequirementIds = useMemo(() => {
+    const activeIds = new Set<number>()
+
+    changeRequests.forEach((changeRequest) => {
+      if (isActiveChangeRequestStatus(changeRequest.status)) {
+        activeIds.add(changeRequest.item_id)
+      }
+    })
+
+    return activeIds
+  }, [changeRequests])
 
   const selectedRequirementChangeRequests = useMemo(() => {
-    if (!canRequestChange || !selectedRequirementForChangeRequestDetails) return []
+    if (!canViewChangeRequests || !selectedRequirementForChangeRequestDetails) return []
 
     return (
       changeRequestsByRequirementId.get(
@@ -456,10 +854,75 @@ export default function RequirementsDocumentPage() {
       ) || []
     )
   }, [
-    canRequestChange,
+    canViewChangeRequests,
     changeRequestsByRequirementId,
     selectedRequirementForChangeRequestDetails,
   ])
+
+  const requirementFieldLabelsByKey = useMemo(() => {
+    const labels: Record<string, string> = {}
+
+    template?.sections.forEach((section) => {
+      section.fields.forEach((field) => {
+        labels[field.key] = field.label
+      })
+    })
+
+    return labels
+  }, [template])
+
+  const approvableRequirementIds = useMemo(() => {
+    return requirements
+      .filter((requirement) => requirement.approval_summary?.current_user_can_approve)
+      .map((requirement) => requirement.id)
+  }, [requirements])
+
+  const rejectableRequirementIds = useMemo(() => {
+    return requirements
+      .filter((requirement) => requirement.approval_summary?.current_user_can_reject)
+      .map((requirement) => requirement.id)
+  }, [requirements])
+
+  const approvalSelectableRequirementIds = useMemo(() => {
+    const actionableIds = new Set([
+      ...approvableRequirementIds,
+      ...rejectableRequirementIds,
+    ])
+
+    return requirements
+      .filter(
+        (requirement) =>
+          requirement.status === "For Approval" && actionableIds.has(requirement.id)
+      )
+      .map((requirement) => requirement.id)
+  }, [approvableRequirementIds, rejectableRequirementIds, requirements])
+
+  const selectedApprovableRequirementIds = useMemo(() => {
+    const selected = new Set(selectedRequirementIds)
+    return approvableRequirementIds.filter((id) => selected.has(id))
+  }, [approvableRequirementIds, selectedRequirementIds])
+
+  const selectedRejectableRequirementIds = useMemo(() => {
+    const selected = new Set(selectedRequirementIds)
+    return rejectableRequirementIds.filter((id) => selected.has(id))
+  }, [rejectableRequirementIds, selectedRequirementIds])
+
+  const allVisibleRequirementsSelected =
+    approvalSelectableRequirementIds.length > 0 &&
+    approvalSelectableRequirementIds.every((id) => selectedRequirementIds.includes(id))
+
+  const submittableApprovalRequirementIds = useMemo(() => {
+    if (documentSummary?.status === "Rejected") {
+      return requirements
+        .filter((requirement) => requirement.status === "Rejected")
+        .map((requirement) => requirement.id)
+    }
+
+    return requirements.map((requirement) => requirement.id)
+  }, [documentSummary?.status, requirements])
+
+  const submitApprovalRequirementCount = submittableApprovalRequirementIds.length
+  const isResubmittingRejectedRequirements = documentSummary?.status === "Rejected"
 
   const checkPermission = async (permission: string) => {
     if (!projectId || Number.isNaN(projectId)) return false
@@ -504,6 +967,8 @@ export default function RequirementsDocumentPage() {
         submitAllowed,
         freezeAllowed,
         requestChangeAllowed,
+        reviewChangeRequestAllowed,
+        decideChangeRequestAllowed,
       ] = await Promise.all([
         checkPermission("requirements.create"),
         checkPermission("requirements.edit"),
@@ -511,6 +976,8 @@ export default function RequirementsDocumentPage() {
         checkPermission("requirements.submit_approval"),
         checkPermission("requirements.freeze"),
         checkPermission("requirements.request_change"),
+        checkPermission("requirements.review_change_request"),
+        checkPermission("requirements.decide_change_request"),
       ])
 
       setCanCreateRequirements(createAllowed)
@@ -519,6 +986,8 @@ export default function RequirementsDocumentPage() {
       setCanSubmitApproval(submitAllowed)
       setCanFreezeRequirements(freezeAllowed)
       setCanRequestChange(requestChangeAllowed)
+      setCanReviewChangeRequest(reviewChangeRequestAllowed)
+      setCanDecideChangeRequest(decideChangeRequestAllowed)
 
       return {
         createAllowed,
@@ -527,14 +996,19 @@ export default function RequirementsDocumentPage() {
         submitAllowed,
         freezeAllowed,
         requestChangeAllowed,
+        reviewChangeRequestAllowed,
+        decideChangeRequestAllowed,
       }
     } finally {
       setPermissionLoading(false)
     }
   }
 
-  const fetchChangeRequests = async (targetDocumentId?: number) => {
-    if (!canRequestChange) {
+  const fetchChangeRequests = async (
+    targetDocumentId?: number,
+    changeRequestsVisible = canViewChangeRequests
+  ) => {
+    if (!changeRequestsVisible) {
       setChangeRequests([])
       return
     }
@@ -572,7 +1046,7 @@ export default function RequirementsDocumentPage() {
   const viewSignedChangeRequestFile = async (
     changeRequest: RequirementChangeRequest
   ) => {
-    if (!documentSummary || !canRequestChange) return
+    if (!documentSummary || !canViewChangeRequests) return
 
     try {
       setActionLoading(`view-change-request-file-${changeRequest.id}`)
@@ -607,6 +1081,50 @@ export default function RequirementsDocumentPage() {
         error instanceof Error
           ? error.message
           : "Failed to open signed change request form."
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const viewImpactAnalysisFile = async (
+    changeRequest: RequirementChangeRequest
+  ) => {
+    if (!documentSummary || !canViewChangeRequests) return
+
+    try {
+      setActionLoading(`view-impact-analysis-file-${changeRequest.id}`)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/change-requests/${changeRequest.id}/impact-analysis-file`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(false),
+          credentials: "include",
+        }
+      )
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setMessage(data?.message || "Failed to open impact analysis result.")
+        return
+      }
+
+      const blob = await res.blob()
+      const fileUrl = window.URL.createObjectURL(blob)
+
+      window.open(fileUrl, "_blank", "noopener,noreferrer")
+
+      window.setTimeout(() => {
+        window.URL.revokeObjectURL(fileUrl)
+      }, 30000)
+    } catch (error) {
+      console.error("Failed to view impact analysis result:", error)
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to open impact analysis result."
       )
     } finally {
       setActionLoading(null)
@@ -650,6 +1168,40 @@ export default function RequirementsDocumentPage() {
     } catch (error) {
       console.error("Failed to load approval summary:", error)
       setMessage("Failed to load approval summary")
+    }
+  }
+
+  const openChangeLogsModal = async (requirement: RequirementItemSummary) => {
+    if (!projectId || !documentSummary) return
+
+    try {
+      setSelectedRequirementForLogs(requirement)
+      setChangeLogsLoading(true)
+      setChangeLogs([])
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/items/${requirement.id}/change-logs`,
+        {
+          method: "GET",
+          headers: createAuthHeaders(),
+          credentials: "include",
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to load requirement logs")
+        return
+      }
+
+      setChangeLogs(data.logs || [])
+    } catch (error) {
+      console.error("Failed to load requirement logs:", error)
+      setMessage("Failed to load requirement logs")
+    } finally {
+      setChangeLogsLoading(false)
     }
   }
 
@@ -705,11 +1257,10 @@ export default function RequirementsDocumentPage() {
         await fetchApprovalSummary(false, data.document_summary.id)
       }
 
-      if (requestChangeAllowed) {
-        await fetchChangeRequests(data.document_summary.id)
-      } else {
-        setChangeRequests([])
-      }
+      await fetchChangeRequests(
+        data.document_summary.id,
+        requestChangeAllowed
+      )
     } catch (error) {
       console.error("Failed to fetch requirement document page:", error)
       setMessage(
@@ -730,7 +1281,11 @@ export default function RequirementsDocumentPage() {
 
       if (cancelled) return
 
-      await fetchData(permissions.requestChangeAllowed)
+      await fetchData(
+        permissions.requestChangeAllowed ||
+          permissions.reviewChangeRequestAllowed ||
+          permissions.decideChangeRequestAllowed
+      )
     }
 
     loadPage()
@@ -739,6 +1294,13 @@ export default function RequirementsDocumentPage() {
       cancelled = true
     }
   }, [projectId, documentId])
+
+  useEffect(() => {
+    setSelectedRequirementIds((prev) => {
+      const availableIds = new Set(approvalSelectableRequirementIds)
+      return prev.filter((id) => availableIds.has(id))
+    })
+  }, [approvalSelectableRequirementIds])
 
   const updateRequirementInList = (summary: RequirementItemSummary) => {
     setRequirements((prev) => {
@@ -761,6 +1323,40 @@ export default function RequirementsDocumentPage() {
           }
         : prev
     )
+  }
+
+  const toggleRequirementSelection = (requirementId: number) => {
+    if (!approvalSelectableRequirementIds.includes(requirementId)) return
+
+    setSelectedRequirementIds((prev) =>
+      prev.includes(requirementId)
+        ? prev.filter((id) => id !== requirementId)
+        : [...prev, requirementId]
+    )
+  }
+
+  const toggleSelectAllRequirements = () => {
+    setSelectedRequirementIds(
+      allVisibleRequirementsSelected ? [] : approvalSelectableRequirementIds
+    )
+  }
+
+  const replaceRequirementsFromAction = (updatedRequirements?: RequirementItemSummary[]) => {
+    if (!updatedRequirements || updatedRequirements.length === 0) return
+
+    const updatedById = new Map(
+      updatedRequirements.map((requirement) => [requirement.id, requirement])
+    )
+
+    setRequirements((prev) =>
+      prev.map((requirement) => updatedById.get(requirement.id) || requirement)
+    )
+
+    setSelectedRequirementDetails((prev) => {
+      if (!prev) return prev
+      const updated = updatedById.get(prev.summary.id)
+      return updated ? { ...prev, summary: updated } : prev
+    })
   }
 
   const updateDocumentStatus = (status: string) => {
@@ -1041,6 +1637,11 @@ export default function RequirementsDocumentPage() {
       return
     }
 
+    if (requirementHasActiveChangeRequest(requirement.id)) {
+      setMessage("This requirement already has an active change request.")
+      return
+    }
+
     setSelectedRequirementForChange(requirement)
     setChangeRequestForm(getInitialChangeRequestForm())
     setSignedChangeRequestFile(null)
@@ -1055,13 +1656,57 @@ export default function RequirementsDocumentPage() {
   }
 
   const openChangeRequestDetailsModal = (requirement: RequirementItemSummary) => {
-    if (!canRequestChange) return
+    if (!canViewChangeRequests) return
 
     setSelectedRequirementForChangeRequestDetails(requirement)
   }
 
   const closeChangeRequestDetailsModal = () => {
     setSelectedRequirementForChangeRequestDetails(null)
+  }
+
+  const requirementHasActiveChangeRequest = (requirementId: number) => {
+    return activeChangeRequestRequirementIds.has(requirementId)
+  }
+
+  const getRequestChangeDisabledMessage = (requirementId: number) => {
+    const activeRequest = changeRequestsByRequirementId
+      .get(requirementId)
+      ?.find((changeRequest) =>
+        isActiveChangeRequestStatus(changeRequest.status)
+      )
+
+    if (!activeRequest) return "Request Change"
+
+    if (activeRequest.status === "Draft") return "Draft Change Request Exists"
+    if (activeRequest.status === "Stakeholder Review") return "Waiting for Stakeholder Decision"
+
+    return "Waiting for Impact Analysis Result"
+  }
+
+  const replaceChangeRequestInList = (updatedChangeRequest: RequirementChangeRequest) => {
+    setChangeRequests((prev) =>
+      prev.map((changeRequest) =>
+        changeRequest.id === updatedChangeRequest.id
+          ? updatedChangeRequest
+          : changeRequest
+      )
+    )
+  }
+
+  const openChangeRequestDecisionModal = (
+    changeRequest: RequirementChangeRequest,
+    decision: "Proceed" | "Declined"
+  ) => {
+    setChangeRequestDecisionTarget(changeRequest)
+    setChangeRequestDecision(decision)
+    setChangeRequestDecisionNote("")
+  }
+
+  const closeChangeRequestDecisionModal = () => {
+    setChangeRequestDecisionTarget(null)
+    setChangeRequestDecision("Proceed")
+    setChangeRequestDecisionNote("")
   }
 
   const saveChangeRequestDraft = async () => {
@@ -1165,26 +1810,46 @@ export default function RequirementsDocumentPage() {
         return
       }
 
-      const submittedAt = new Date().toISOString()
+      const submittedChangeRequests: RequirementChangeRequest[] =
+        Array.isArray(data.change_requests) ? data.change_requests : []
 
-      setChangeRequests((prev) =>
-        prev.map((changeRequest) =>
-          changeRequest.status === "Draft"
-            ? {
-                ...changeRequest,
-                status: "Submitted",
-                submitted_at: submittedAt,
-              }
-            : changeRequest
+      if (submittedChangeRequests.length > 0) {
+        const submittedById = new Map(
+          submittedChangeRequests.map((changeRequest) => [
+            changeRequest.id,
+            changeRequest,
+          ])
         )
-      )
+
+        setChangeRequests((prev) =>
+          prev.map((changeRequest) =>
+            submittedById.get(changeRequest.id) || changeRequest
+          )
+        )
+      } else {
+        const submittedAt = new Date().toISOString()
+
+        setChangeRequests((prev) =>
+          prev.map((changeRequest) =>
+            changeRequest.status === "Draft"
+              ? {
+                  ...changeRequest,
+                  status: "Impact Analysis Requested",
+                  submitted_at: submittedAt,
+                  is_active: true,
+                }
+              : changeRequest
+          )
+        )
+      }
 
       closeChangeRequestDetailsModal()
+      setIsSubmitChangeRequestsModalOpen(false)
 
       setMessage(
-        `${data.message || "Change requests submitted successfully"}. Submitted ${
+        `${data.message || "Change requests submitted for impact analysis review"}. Sent ${
           data.submitted_count ?? draftChangeRequestCount
-        } change request(s) affecting ${
+        } change request(s) for impact analysis affecting ${
           data.affected_requirement_count ?? "selected"
         } requirement(s).`
       )
@@ -1192,6 +1857,129 @@ export default function RequirementsDocumentPage() {
       console.error("Failed to submit change requests:", error)
       setMessage(
         error instanceof Error ? error.message : "Failed to submit change requests."
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const openImpactAnalysisModal = (changeRequest: RequirementChangeRequest) => {
+    setSelectedChangeRequestForImpactAnalysis(changeRequest)
+    setImpactAnalysisFile(null)
+    setImpactAnalysisNotes("")
+    setStakeholderReviewDays("3")
+    setImpactAnalysisModalOpen(true)
+  }
+
+  const closeImpactAnalysisModal = () => {
+    setSelectedChangeRequestForImpactAnalysis(null)
+    setImpactAnalysisFile(null)
+    setImpactAnalysisNotes("")
+    setStakeholderReviewDays("3")
+    setImpactAnalysisModalOpen(false)
+  }
+
+  const uploadImpactAnalysis = async () => {
+    if (!documentSummary || !selectedChangeRequestForImpactAnalysis) return
+
+    if (!impactAnalysisFile) {
+      setMessage("Impact analysis result file is required.")
+      return
+    }
+
+    try {
+      setActionLoading(
+        `upload-impact-analysis-${selectedChangeRequestForImpactAnalysis.id}`
+      )
+      setMessage("")
+
+      const formData = new FormData()
+      formData.append("impact_analysis_file", impactAnalysisFile)
+      formData.append("impact_analysis_notes", impactAnalysisNotes)
+      formData.append("review_days", String(Number(stakeholderReviewDays) || 3))
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/change-requests/${selectedChangeRequestForImpactAnalysis.id}/impact-analysis`,
+        {
+          method: "POST",
+          headers: createAuthHeaders(false),
+          credentials: "include",
+          body: formData,
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to upload impact analysis result.")
+        return
+      }
+
+      if (data.change_request) {
+        replaceChangeRequestInList(data.change_request)
+      }
+
+      closeImpactAnalysisModal()
+      setMessage(
+        data.message ||
+          "Impact analysis uploaded and sent to stakeholders for decision."
+      )
+    } catch (error) {
+      console.error("Failed to upload impact analysis:", error)
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to upload impact analysis result."
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const decideChangeRequest = async () => {
+    if (!documentSummary || !changeRequestDecisionTarget) return
+
+    if (changeRequestDecision === "Declined" && !changeRequestDecisionNote.trim()) {
+      setMessage("A reason is required when marking a change request as Declined.")
+      return
+    }
+
+    try {
+      setActionLoading(`decide-change-request-${changeRequestDecisionTarget.id}`)
+      setMessage("")
+
+      const res = await fetch(
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/change-requests/${changeRequestDecisionTarget.id}/decision`,
+        {
+          method: "POST",
+          headers: createAuthHeaders(),
+          credentials: "include",
+          body: JSON.stringify({
+            decision: changeRequestDecision,
+            note: changeRequestDecisionNote,
+          }),
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.message || "Failed to update change request decision.")
+        return
+      }
+
+      if (data.change_request) {
+        replaceChangeRequestInList(data.change_request)
+      }
+
+      closeChangeRequestDecisionModal()
+      setMessage(data.message || "Change request decision saved.")
+    } catch (error) {
+      console.error("Failed to update change request decision:", error)
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to update change request decision."
       )
     } finally {
       setActionLoading(null)
@@ -1311,6 +2099,17 @@ export default function RequirementsDocumentPage() {
       return
     }
 
+    const itemIds = submittableApprovalRequirementIds
+
+    if (itemIds.length === 0) {
+      setMessage(
+        isResubmittingRejectedRequirements
+          ? "There are no rejected requirements to resubmit."
+          : "Add at least one requirement before submitting for approval."
+      )
+      return
+    }
+
     try {
       setActionLoading("submit-approval")
       setMessage("")
@@ -1321,6 +2120,10 @@ export default function RequirementsDocumentPage() {
           method: "POST",
           headers: createAuthHeaders(),
           credentials: "include",
+          body: JSON.stringify({
+            item_ids: itemIds,
+            review_days: Number(reviewDays) || 3,
+          }),
         }
       )
 
@@ -1332,8 +2135,16 @@ export default function RequirementsDocumentPage() {
       }
 
       setApprovalSummary(data.approval_summary || null)
-      updateDocumentStatus("For Approval")
-      setMessage(data.message || "Requirement document submitted for approval.")
+      replaceRequirementsFromAction(data.requirements || [])
+      updateDocumentStatus(data.document?.status || "For Approval")
+      setSelectedRequirementIds([])
+      setIsSubmitApprovalModalOpen(false)
+      setMessage(
+        data.message ||
+          (isResubmittingRejectedRequirements
+            ? "Rejected requirement(s) resubmitted for approval."
+            : "All requirements submitted for approval.")
+      )
     } catch (error) {
       console.error("Failed to submit for approval:", error)
       setMessage("Failed to submit for approval")
@@ -1345,35 +2156,57 @@ export default function RequirementsDocumentPage() {
   const approveDocument = async () => {
     if (!documentSummary) return
 
+    if (approvalSummary?.current_user_is_submitter) {
+      setMessage("The user who submitted this document does not need to approve their own requirements.")
+      return
+    }
+
+    const itemIds = selectedApprovableRequirementIds
+
+    if (itemIds.length === 0) {
+      setMessage("Tick at least one requirement that is for approval.")
+      return
+    }
+
     try {
       setActionLoading("approve-document")
       setMessage("")
 
       const res = await fetch(
-        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/approve`,
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/items/approve`,
         {
           method: "POST",
           headers: createAuthHeaders(),
           credentials: "include",
+          body: JSON.stringify({ item_ids: itemIds }),
         }
       )
 
       const data = await res.json()
 
       if (!res.ok) {
-        setMessage(data.message || "Failed to approve document")
+        setMessage(data.message || "Failed to approve requirements")
         return
       }
 
-      setMessage(data.message || "Requirement document approved")
       setApprovalSummary(data.approval_summary || null)
+      replaceRequirementsFromAction(data.requirements || [])
 
-      if (data.approval_summary?.is_fully_approved || data.document?.status === "Approved") {
-        updateDocumentStatus("Approved")
+      if (data.document?.status) {
+        updateDocumentStatus(data.document.status)
       }
+
+      const changedRequirementIds = Array.isArray(data.changed_requirement_ids)
+        ? data.changed_requirement_ids
+        : itemIds
+
+      setSelectedRequirementIds((prev) =>
+        prev.filter((id) => !changedRequirementIds.includes(id))
+      )
+      setMessage(data.message || "Requirement(s) approved")
     } catch (error) {
-      console.error("Failed to approve document:", error)
-      setMessage("Failed to approve document")
+      console.error("Failed to approve requirements:", error)
+      setMessage("Failed to approve requirements")
     } finally {
       setActionLoading(null)
     }
@@ -1382,17 +2215,30 @@ export default function RequirementsDocumentPage() {
   const rejectDocument = async () => {
     if (!documentSummary) return
 
+    if (approvalSummary?.current_user_is_submitter) {
+      setMessage("The user who submitted this document does not need to reject their own requirements.")
+      return
+    }
+
+    const itemIds = selectedRejectableRequirementIds
+
+    if (itemIds.length === 0) {
+      setMessage("Tick at least one requirement that is for approval.")
+      return
+    }
+
     try {
       setActionLoading("reject-document")
       setMessage("")
 
       const res = await fetch(
-        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/reject`,
+        `${API_BASE_URL}/project/${projectId}/requirement-documents/${documentSummary.id}/items/reject`,
         {
           method: "POST",
           headers: createAuthHeaders(),
           credentials: "include",
           body: JSON.stringify({
+            item_ids: itemIds,
             reason: rejectionReason,
           }),
         }
@@ -1401,18 +2247,30 @@ export default function RequirementsDocumentPage() {
       const data = await res.json()
 
       if (!res.ok) {
-        setMessage(data.message || "Failed to reject document")
+        setMessage(data.message || "Failed to reject requirements")
         return
       }
 
-      setMessage(data.message || "Requirement document rejected")
       setApprovalSummary(data.approval_summary || null)
+      replaceRequirementsFromAction(data.requirements || [])
       setIsRejectModalOpen(false)
       setRejectionReason("")
-      updateDocumentStatus("Rejected")
+
+      if (data.document?.status) {
+        updateDocumentStatus(data.document.status)
+      }
+
+      const changedRequirementIds = Array.isArray(data.changed_requirement_ids)
+        ? data.changed_requirement_ids
+        : itemIds
+
+      setSelectedRequirementIds((prev) =>
+        prev.filter((id) => !changedRequirementIds.includes(id))
+      )
+      setMessage(data.message || "Requirement(s) rejected")
     } catch (error) {
-      console.error("Failed to reject document:", error)
-      setMessage("Failed to reject document")
+      console.error("Failed to reject requirements:", error)
+      setMessage("Failed to reject requirements")
     } finally {
       setActionLoading(null)
     }
@@ -1423,6 +2281,11 @@ export default function RequirementsDocumentPage() {
 
     if (!canFreezeRequirements) {
       setMessage("You don't have permission to freeze requirements.")
+      return
+    }
+
+    if (!approvalSummary?.current_user_is_submitter) {
+      setMessage("Only the user who created this document can freeze it.")
       return
     }
 
@@ -1820,8 +2683,11 @@ export default function RequirementsDocumentPage() {
             canSubmitApproval && (
               <button
                 type="button"
-                onClick={submitForApproval}
-                disabled={isActionLoading("submit-approval")}
+                onClick={() => setIsSubmitApprovalModalOpen(true)}
+                disabled={
+                  isActionLoading("submit-approval") ||
+                  submitApprovalRequirementCount === 0
+                }
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
                 <FileCheck className="h-4 w-4" />
@@ -1834,7 +2700,7 @@ export default function RequirementsDocumentPage() {
             )}
 
           {documentSummary.status !== "Draft" &&
-            approvalSummary?.current_user_is_submitter && (
+            approvalSummary && (
               <button
                 type="button"
                 onClick={() => fetchApprovalSummary(true)}
@@ -1845,53 +2711,10 @@ export default function RequirementsDocumentPage() {
               </button>
             )}
 
-          {documentSummary.status === "For Approval" &&
-            approvalSummary?.current_user_can_approve && (
-              <button
-                type="button"
-                onClick={approveDocument}
-                disabled={isActionLoading("approve-document")}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-              >
-                <CheckCircle className="h-4 w-4" />
-                {isActionLoading("approve-document")
-                  ? "Approving..."
-                  : "Approve Requirements"}
-              </button>
-            )}
-
-          {documentSummary.status === "For Approval" &&
-            approvalSummary?.current_user_can_reject && (
-              <button
-                type="button"
-                onClick={() => setIsRejectModalOpen(true)}
-                disabled={isActionLoading("reject-document")}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
-              >
-                <XCircle className="h-4 w-4" />
-                Reject Document
-              </button>
-            )}
-
-          {documentSummary.status === "For Approval" &&
-            approvalSummary?.current_user_has_approved && (
-              <span className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700">
-                <CheckCircle className="h-4 w-4" />
-                You already approved this requirements
-              </span>
-            )}
-
-          {documentSummary.status === "For Approval" &&
-            approvalSummary?.current_user_has_rejected && (
-              <span className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700">
-                <XCircle className="h-4 w-4" />
-                You already rejected this requirements
-              </span>
-            )}
-
           {documentSummary.status === "Approved" &&
             !permissionLoading &&
-            canFreezeRequirements && (
+            canFreezeRequirements &&
+            approvalSummary?.current_user_is_submitter && (
               <button
                 type="button"
                 onClick={freezeDocument}
@@ -1937,14 +2760,14 @@ export default function RequirementsDocumentPage() {
           {!permissionLoading && canRequestChange && draftChangeRequestCount > 0 && (
             <button
               type="button"
-              onClick={submitChangeRequests}
+              onClick={() => setIsSubmitChangeRequestsModalOpen(true)}
               disabled={isActionLoading("submit-change-requests")}
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
             >
               <Send className="h-4 w-4" />
               {isActionLoading("submit-change-requests")
                 ? "Submitting..."
-                : "Submit Change Requests"}
+                : "Send for Impact Analysis"}
             </button>
           )}
         </div>
@@ -1985,10 +2808,15 @@ export default function RequirementsDocumentPage() {
                   onClick={() =>
                     openChangeRequestModal(selectedRequirementDetails.summary)
                   }
-                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+                  disabled={requirementHasActiveChangeRequest(
+                    selectedRequirementDetails.summary.id
+                  )}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <ClipboardList className="h-4 w-4" />
-                  Request Change
+                  {getRequestChangeDisabledMessage(
+                    selectedRequirementDetails.summary.id
+                  )}
                 </button>
               )}
 
@@ -2104,7 +2932,7 @@ export default function RequirementsDocumentPage() {
               </h2>
 
               <p className="mt-1 text-sm text-muted-foreground">
-                These requirements use the dynamic template.
+                These requirements use the dynamic template. Requirements that are already for approval can be ticked for approve or reject actions.
               </p>
             </div>
 
@@ -2125,26 +2953,94 @@ export default function RequirementsDocumentPage() {
               No requirements in this document yet.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              {documentSummary.status === "For Approval" &&
+                approvalSelectableRequirementIds.length > 0 && (
+                  <div className="flex flex-col gap-3 border-b border-border px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={allVisibleRequirementsSelected}
+                          onChange={toggleSelectAllRequirements}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        Select all pending approvals
+                      </label>
+
+                      <span className="text-sm text-muted-foreground">
+                        {selectedRequirementIds.length} selected
+                      </span>
+                    </div>
+
+                    {selectedRequirementIds.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={approveDocument}
+                          disabled={
+                            isActionLoading("approve-document") ||
+                            selectedApprovableRequirementIds.length === 0
+                          }
+                          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                        >
+                          <CheckCircle className="h-4 w-4" />
+                          {isActionLoading("approve-document")
+                            ? "Approving..."
+                            : "Approve Selected"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setIsRejectModalOpen(true)}
+                          disabled={
+                            isActionLoading("reject-document") ||
+                            selectedRejectableRequirementIds.length === 0
+                          }
+                          className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Reject Selected
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-muted/40 text-left text-foreground">
                   <tr>
+                    <th className="w-10 px-4 py-3 font-medium">
+                      {documentSummary.status === "For Approval" &&
+                        approvalSelectableRequirementIds.length > 0 && (
+                          <input
+                            type="checkbox"
+                            checked={allVisibleRequirementsSelected}
+                            onChange={toggleSelectAllRequirements}
+                            className="h-4 w-4 rounded border-border"
+                            aria-label="Select all pending approvals"
+                          />
+                        )}
+                    </th>
                     <th className="px-4 py-3 font-medium">Requirement ID</th>
                     <th className="px-4 py-3 font-medium">Title</th>
                     <th className="px-4 py-3 font-medium">Priority</th>
                     <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Approval</th>
                     <th className="px-4 py-3 font-medium">Comments</th>
-                    {canRequestChange && (
+                    <th className="px-4 py-3 font-medium">Logs</th>
+                    {canViewChangeRequests && (
                       <th className="px-4 py-3 font-medium">Change Requests</th>
                     )}
                     <th className="px-4 py-3 font-medium">Date Modified</th>
-                    <th className="w-64 px-4 py-3 font-medium">Actions</th>
+                    <th className="w-72 px-4 py-3 font-medium">Actions</th>
                   </tr>
                 </thead>
 
                 <tbody>
                   {requirements.map((requirement) => {
-                    const relatedChangeRequests = canRequestChange
+                    const relatedChangeRequests = canViewChangeRequests
                       ? changeRequestsByRequirementId.get(requirement.id) || []
                       : []
 
@@ -2152,15 +3048,60 @@ export default function RequirementsDocumentPage() {
                       (changeRequest) => changeRequest.status === "Draft"
                     ).length
 
-                    const requirementSubmittedCount = relatedChangeRequests.filter(
-                      (changeRequest) => changeRequest.status === "Submitted"
+                    const requirementImpactAnalysisRequestedCount = relatedChangeRequests.filter(
+                      (changeRequest) =>
+                        changeRequest.status === "Impact Analysis Requested" ||
+                        changeRequest.status === "Submitted"
                     ).length
+
+                    const requirementDecisionRequiredCount = relatedChangeRequests.filter(
+                      (changeRequest) =>
+                        changeRequest.status === "Stakeholder Review" &&
+                        changeRequest.can_decide
+                    ).length
+
+                    const requirementSentToStakeholdersCount = relatedChangeRequests.filter(
+                      (changeRequest) =>
+                        changeRequest.status === "Stakeholder Review" &&
+                        !changeRequest.can_decide
+                    ).length
+
+                    const requirementProceedCount = relatedChangeRequests.filter(
+                      (changeRequest) => changeRequest.status === "Proceed"
+                    ).length
+
+                    const requirementDeclinedCount = relatedChangeRequests.filter(
+                      (changeRequest) => changeRequest.status === "Declined"
+                    ).length
+
+                    const isApprovalSelectable =
+                      documentSummary.status === "For Approval" &&
+                      approvalSelectableRequirementIds.includes(requirement.id)
+
+                    const approvalDecisionStatus = getApprovalDecisionStatus(
+                      requirement.approval_summary
+                    )
+                    const approvalDecisionLabel = getApprovalDecisionLabel(
+                      requirement.approval_summary
+                    )
 
                     return (
                       <tr
                         key={requirement.id}
                         className="border-t border-border hover:bg-muted/30"
                       >
+                        <td className="px-4 py-3">
+                          {isApprovalSelectable ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedRequirementIds.includes(requirement.id)}
+                              onChange={() => toggleRequirementSelection(requirement.id)}
+                              className="h-4 w-4 rounded border-border"
+                              aria-label={`Select ${requirement.requirement_code}`}
+                            />
+                          ) : null}
+                        </td>
+
                         <td className="px-4 py-3 font-medium text-foreground">
                           {requirement.requirement_code}
                         </td>
@@ -2178,10 +3119,49 @@ export default function RequirementsDocumentPage() {
                         </td>
 
                         <td className="px-4 py-3 text-muted-foreground">
+                          {requirement.approval_summary?.submitted ? (
+                            <div className="space-y-1">
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getApprovalStatusClasses(
+                                  approvalDecisionStatus
+                                )}`}
+                              >
+                                {approvalDecisionLabel} · {requirement.approval_summary.approved_count}/
+                                {requirement.approval_summary.total_required} approved
+                              </span>
+                              {requirement.approval_summary.pending_count > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  {requirement.approval_summary.pending_count} pending
+                                </p>
+                              )}
+                              {requirement.approval_summary.rejected_count > 0 && (
+                                <p className="text-xs text-red-600">
+                                  {requirement.approval_summary.rejected_count} rejection vote
+                                  {requirement.approval_summary.rejected_count === 1 ? "" : "s"} recorded
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            "Not requested"
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-muted-foreground">
                           {requirement.comment_count || 0}
                         </td>
 
-                        {canRequestChange && (
+                        <td className="px-4 py-3 text-muted-foreground">
+                          <button
+                            type="button"
+                            onClick={() => openChangeLogsModal(requirement)}
+                            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted"
+                          >
+                            {requirement.change_log_count || 0} log
+                            {(requirement.change_log_count || 0) === 1 ? "" : "s"}
+                          </button>
+                        </td>
+
+                        {canViewChangeRequests && (
                           <td className="px-4 py-3 text-muted-foreground">
                             {relatedChangeRequests.length === 0 ? (
                               "-"
@@ -2200,16 +3180,68 @@ export default function RequirementsDocumentPage() {
                                   </button>
                                 )}
 
-                                {requirementSubmittedCount > 0 && (
+                                {requirementImpactAnalysisRequestedCount > 0 && (
                                   <button
                                     type="button"
                                     onClick={() =>
                                       openChangeRequestDetailsModal(requirement)
                                     }
                                     className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                                    title="View submitted change request"
+                                    title="View change request waiting for impact analysis"
                                   >
-                                    {requirementSubmittedCount} submitted
+                                    {requirementImpactAnalysisRequestedCount} impact analysis requested
+                                  </button>
+                                )}
+
+                                {requirementDecisionRequiredCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openChangeRequestDetailsModal(requirement)
+                                    }
+                                    className="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
+                                    title="Stakeholder decision required for this change request"
+                                  >
+                                    {requirementDecisionRequiredCount} decision required
+                                  </button>
+                                )}
+
+                                {requirementSentToStakeholdersCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openChangeRequestDetailsModal(requirement)
+                                    }
+                                    className="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
+                                    title="View change request sent to stakeholders"
+                                  >
+                                    {requirementSentToStakeholdersCount} sent to stakeholders
+                                  </button>
+                                )}
+
+                                {requirementProceedCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openChangeRequestDetailsModal(requirement)
+                                    }
+                                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                                    title="View approved-to-proceed change request"
+                                  >
+                                    {requirementProceedCount} proceed
+                                  </button>
+                                )}
+
+                                {requirementDeclinedCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openChangeRequestDetailsModal(requirement)
+                                    }
+                                    className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                                    title="View declined change request"
+                                  >
+                                    {requirementDeclinedCount} declined
                                   </button>
                                 )}
                               </div>
@@ -2251,8 +3283,9 @@ export default function RequirementsDocumentPage() {
                               <button
                                 type="button"
                                 onClick={() => openChangeRequestModal(requirement)}
-                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted"
-                                title="Request Change"
+                                disabled={requirementHasActiveChangeRequest(requirement.id)}
+                                className="rounded-lg border border-border p-2 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                                title={getRequestChangeDisabledMessage(requirement.id)}
                               >
                                 <ClipboardList className="h-4 w-4" />
                               </button>
@@ -2292,6 +3325,7 @@ export default function RequirementsDocumentPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
       )}
@@ -2538,7 +3572,7 @@ export default function RequirementsDocumentPage() {
         </div>
       )}
 
-      {selectedRequirementForChangeRequestDetails && canRequestChange && (
+      {selectedRequirementForChangeRequestDetails && canViewChangeRequests && (
         <div className="fixed inset-0 z-[90] overflow-y-auto bg-black/40 p-4">
           <div className="mx-auto max-w-3xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -2580,7 +3614,7 @@ export default function RequirementsDocumentPage() {
                             changeRequest.status
                           )}`}
                         >
-                          {changeRequest.status}
+                          {getChangeRequestStakeholderStatusLabel(changeRequest)}
                         </span>
 
                         <p className="mt-3 text-sm text-muted-foreground">
@@ -2591,24 +3625,174 @@ export default function RequirementsDocumentPage() {
                         </p>
                       </div>
 
-                      {changeRequest.status === "Draft" &&
-                        canRequestChange &&
-                        changeRequest.can_delete !== false && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {changeRequest.status === "Stakeholder Review" &&
+                          changeRequest.can_decide && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openChangeRequestDecisionModal(
+                                    changeRequest,
+                                    "Proceed"
+                                  )
+                                }
+                                className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+                              >
+                                <CheckCircle className="h-4 w-4" />
+                                Proceed
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openChangeRequestDecisionModal(
+                                    changeRequest,
+                                    "Declined"
+                                  )
+                                }
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                              >
+                                <XCircle className="h-4 w-4" />
+                                Decline
+                              </button>
+                            </>
+                          )}
+
+                        {changeRequest.can_upload_impact_analysis && (
                           <button
                             type="button"
-                            onClick={() => deleteDraftChangeRequest(changeRequest)}
-                            disabled={isActionLoading(
-                              `delete-change-request-${changeRequest.id}`
-                            )}
-                            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                            onClick={() => openImpactAnalysisModal(changeRequest)}
+                            className="inline-flex items-center gap-2 rounded-lg border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
                           >
-                            <Trash2 className="h-4 w-4" />
-                            {isActionLoading(`delete-change-request-${changeRequest.id}`)
-                              ? "Deleting..."
-                              : "Delete Draft"}
+                            <Upload className="h-4 w-4" />
+                            Upload Impact Analysis
                           </button>
                         )}
+
+                        {changeRequest.status === "Draft" &&
+                          canRequestChange &&
+                          changeRequest.can_delete !== false && (
+                            <button
+                              type="button"
+                              onClick={() => deleteDraftChangeRequest(changeRequest)}
+                              disabled={isActionLoading(
+                                `delete-change-request-${changeRequest.id}`
+                              )}
+                              className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {isActionLoading(`delete-change-request-${changeRequest.id}`)
+                                ? "Deleting..."
+                                : "Delete Draft"}
+                            </button>
+                          )}
+                      </div>
                     </div>
+
+                    {(changeRequest.status === "Impact Analysis Requested" ||
+                      changeRequest.status === "Submitted") &&
+                      changeRequest.can_review_change_request &&
+                      !changeRequest.can_upload_impact_analysis && (
+                        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                          Review the logged change request for impact analysis. The impact analysis meeting/result is handled outside the system, and the requester/BA will upload the final result after it is ready.
+                        </div>
+                      )}
+
+                    {(changeRequest.status === "Impact Analysis Requested" ||
+                      changeRequest.status === "Submitted") &&
+                      changeRequest.can_upload_impact_analysis && (
+                        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                          Upload the impact analysis result after the external impact analysis meeting is complete. Decision makers will be notified only after the result is uploaded.
+                        </div>
+                      )}
+
+                    {changeRequest.status === "Stakeholder Review" && !changeRequest.can_decide &&
+                      getCurrentReviewerDecisionLabel(changeRequest) && (
+                        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                          {getCurrentReviewerDecisionLabel(changeRequest)}. The change request will remain open until all assigned stakeholders have submitted their decision.
+                        </div>
+                      )}
+
+                    {changeRequest.review_summary &&
+                      changeRequest.review_decisions &&
+                      changeRequest.review_decisions.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-border bg-card p-4">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-foreground">
+                              Stakeholder decision progress
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {getChangeRequestReviewSummaryLabel(changeRequest)}
+                            </p>
+                          </div>
+
+                          <div className="text-xs text-muted-foreground md:text-right">
+                            <p>Stakeholder review days: {changeRequest.review_days || "-"}</p>
+                            <p>Due: {formatDateTime(changeRequest.review_due_at)}</p>
+                          </div>
+                        </div>
+
+                        {changeRequest.review_decisions &&
+                          changeRequest.review_decisions.length > 0 && (
+                            <div className="mt-4 overflow-hidden rounded-lg border border-border">
+                              <table className="min-w-full text-sm">
+                                <thead className="bg-muted/40 text-left text-foreground">
+                                  <tr>
+                                    <th className="px-4 py-3 font-medium">Stakeholder</th>
+                                    <th className="px-4 py-3 font-medium">Decision</th>
+                                    <th className="px-4 py-3 font-medium">Date</th>
+                                    <th className="px-4 py-3 font-medium">Note</th>
+                                  </tr>
+                                </thead>
+
+                                <tbody>
+                                  {changeRequest.review_decisions.map((decision) => (
+                                    <tr
+                                      key={`${changeRequest.id}-${decision.user_id}`}
+                                      className="border-t border-border align-top"
+                                    >
+                                      <td className="px-4 py-3">
+                                        <p className="text-foreground">{decision.full_name}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {decision.email}
+                                        </p>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <span
+                                          className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getChangeRequestStatusClasses(
+                                            decision.status
+                                          )}`}
+                                        >
+                                          {getChangeRequestDisplayStatus(decision.status)}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3 text-muted-foreground">
+                                        {formatDateTime(decision.decided_at)}
+                                      </td>
+                                      <td className="max-w-xs whitespace-pre-wrap px-4 py-3 text-muted-foreground">
+                                        {decision.note || "-"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                      </div>
+                    )}
+
+                    {changeRequest.impact_analysis_notes && (
+                      <div className="mt-4">
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Impact Analysis Notes
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground">
+                          {changeRequest.impact_analysis_notes}
+                        </p>
+                      </div>
+                    )}
 
                     <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                       <div>
@@ -2666,7 +3850,18 @@ export default function RequirementsDocumentPage() {
                       </p>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {changeRequest.impact_analysis_notes && (
+                      <div className="mt-4">
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Impact Analysis Notes
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground">
+                          {changeRequest.impact_analysis_notes}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                       <div>
                         <p className="text-sm font-medium text-muted-foreground">
                           Signed Form
@@ -2696,12 +3891,39 @@ export default function RequirementsDocumentPage() {
 
                       <div>
                         <p className="text-sm font-medium text-muted-foreground">
-                          Submitted At
+                          Impact Analysis Result
+                        </p>
+
+                        {changeRequest.impact_analysis_filename &&
+                        changeRequest.can_view_file !== false ? (
+                          <button
+                            type="button"
+                            onClick={() => viewImpactAnalysisFile(changeRequest)}
+                            disabled={isActionLoading(
+                              `view-impact-analysis-file-${changeRequest.id}`
+                            )}
+                            className="mt-1 inline-flex max-w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
+                          >
+                            <Eye className="h-4 w-4 shrink-0" />
+                            <span className="truncate">
+                              {isActionLoading(`view-impact-analysis-file-${changeRequest.id}`)
+                                ? "Opening..."
+                                : changeRequest.impact_analysis_filename}
+                            </span>
+                          </button>
+                        ) : (
+                          <p className="mt-1 text-sm text-foreground">Not uploaded</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Sent for Impact Analysis At
                         </p>
                         <p className="mt-1 text-sm text-foreground">
                           {changeRequest.submitted_at
                             ? formatDateTime(changeRequest.submitted_at)
-                            : "Not submitted"}
+                            : "Not sent for impact analysis"}
                         </p>
                       </div>
                     </div>
@@ -2714,14 +3936,14 @@ export default function RequirementsDocumentPage() {
               <div className="mt-6 flex justify-end">
                 <button
                   type="button"
-                  onClick={submitChangeRequests}
+                  onClick={() => setIsSubmitChangeRequestsModalOpen(true)}
                   disabled={isActionLoading("submit-change-requests")}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 >
                   <Send className="h-4 w-4" />
                   {isActionLoading("submit-change-requests")
                     ? "Submitting..."
-                    : "Submit Change Requests"}
+                    : "Send for Impact Analysis"}
                 </button>
               </div>
             )}
@@ -2763,6 +3985,132 @@ export default function RequirementsDocumentPage() {
                   ? "Deleting..."
                   : "Confirm Delete"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedRequirementForLogs && (
+        <div className="fixed inset-0 z-[85] overflow-y-auto bg-black/40 p-4">
+          <div className="mx-auto max-w-5xl rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">
+                  Requirement Traceability Logs
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {selectedRequirementForLogs.requirement_code} · {selectedRequirementForLogs.title || "-"}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedRequirementForLogs(null)
+                  setChangeLogs([])
+                }}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {changeLogsLoading ? (
+                <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
+                  Loading logs...
+                </div>
+              ) : changeLogs.length === 0 ? (
+                <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
+                  No logs found for this requirement.
+                </div>
+              ) : (
+                changeLogs.map((log) => {
+                  const traceabilityChanges = buildRequirementTraceabilityChanges(
+                    log,
+                    requirementFieldLabelsByKey
+                  )
+
+                  return (
+                    <div key={log.id} className="rounded-xl border border-border bg-background p-4">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex w-fit rounded-full border border-border px-3 py-1 text-xs font-medium capitalize text-foreground">
+                            {log.action.replace(/_/g, " ")}
+                          </span>
+
+                          <span className="text-xs text-muted-foreground">
+                            Action by: {getRequirementLogActorLabel(log)}
+                          </span>
+                        </div>
+
+                        <span className="text-xs text-muted-foreground">
+                          {formatDateTime(log.created_at)}
+                        </span>
+                      </div>
+
+                      <p className="mt-3 text-sm text-foreground">
+                        {log.description || "No description provided."}
+                      </p>
+
+                      {traceabilityChanges.length > 0 ? (
+                        <div className="mt-4 overflow-hidden rounded-lg border border-border">
+                          <div className="border-b border-border bg-muted/40 px-4 py-3">
+                            <p className="text-sm font-medium text-foreground">
+                              Field-level traceability
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Shows the exact old value and new value recorded for this requirement.
+                            </p>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead className="bg-background text-left text-foreground">
+                                <tr>
+                                  <th className="px-4 py-3 font-medium">Field</th>
+                                  <th className="px-4 py-3 font-medium">Change</th>
+                                  <th className="px-4 py-3 font-medium">Before</th>
+                                  <th className="px-4 py-3 font-medium">After</th>
+                                </tr>
+                              </thead>
+
+                              <tbody>
+                                {traceabilityChanges.map((change) => (
+                                  <tr key={`${log.id}-${change.field_key}`} className="border-t border-border align-top">
+                                    <td className="px-4 py-3 font-medium text-foreground">
+                                      {change.field_label}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <span
+                                        className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getTraceabilityChangeClasses(
+                                          change.change_type
+                                        )}`}
+                                      >
+                                        {change.change_type}
+                                      </span>
+                                    </td>
+                                    <td className="max-w-xs whitespace-pre-wrap px-4 py-3 text-muted-foreground">
+                                      {formatTraceabilityValue(change.before_value)}
+                                    </td>
+                                    <td className="max-w-xs whitespace-pre-wrap px-4 py-3 text-foreground">
+                                      {formatTraceabilityValue(change.after_value)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                          No requirement field value changes were recorded for this action.
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
             </div>
           </div>
         </div>
@@ -2868,9 +4216,130 @@ export default function RequirementsDocumentPage() {
         </div>
       )}
 
+
+      {isSubmitChangeRequestsModalOpen && (
+        <div className="fixed inset-0 z-[92] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              Send Change Requests for Impact Analysis
+            </h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              This will notify only users with the change request review permission. They can review the logged request before the external impact analysis meeting. The requester/BA uploads the impact analysis result later.
+            </p>
+
+            <div className="mt-4 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+              {draftChangeRequestCount} draft change request
+              {draftChangeRequestCount === 1 ? "" : "s"} will be sent to the team for impact analysis.
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsSubmitChangeRequestsModalOpen(false)}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={submitChangeRequests}
+                disabled={isActionLoading("submit-change-requests")}
+                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                {isActionLoading("submit-change-requests")
+                  ? "Sending..."
+                  : "Send for Impact Analysis"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {impactAnalysisModalOpen && selectedChangeRequestForImpactAnalysis && (
+        <div className="fixed inset-0 z-[94] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              Upload Impact Analysis Result
+            </h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              Upload the impact analysis result after the team discussion. After upload, users with decision permission will be notified to decide whether the change request should proceed or be declined.
+            </p>
+
+            <label className="mt-4 block rounded-xl border border-dashed border-border bg-background p-4">
+              <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+                <Upload className="h-4 w-4" />
+                Impact Analysis Result File
+              </span>
+
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                onChange={(event) => setImpactAnalysisFile(event.target.files?.[0] || null)}
+                className="mt-3 block w-full text-sm text-muted-foreground"
+              />
+
+              <p className="mt-2 text-xs text-muted-foreground">
+                Accepted files: PDF, DOC, DOCX, PNG, JPG, JPEG.
+              </p>
+            </label>
+
+            <label className="mt-4 block text-sm font-medium text-foreground">
+              Stakeholder review days
+              <input
+                type="number"
+                min="1"
+                value={stakeholderReviewDays}
+                onChange={(event) => setStakeholderReviewDays(event.target.value)}
+                className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </label>
+
+            <label className="mt-4 block text-sm font-medium text-foreground">
+              Impact analysis notes
+              <textarea
+                value={impactAnalysisNotes}
+                onChange={(event) => setImpactAnalysisNotes(event.target.value)}
+                rows={4}
+                placeholder="Optional summary or notes from the impact analysis meeting..."
+                className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeImpactAnalysisModal}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={uploadImpactAnalysis}
+                disabled={
+                  isActionLoading(
+                    `upload-impact-analysis-${selectedChangeRequestForImpactAnalysis.id}`
+                  ) || !impactAnalysisFile
+                }
+                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                {isActionLoading(
+                  `upload-impact-analysis-${selectedChangeRequestForImpactAnalysis.id}`
+                )
+                  ? "Uploading..."
+                  : "Upload and Notify Stakeholders"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isApprovalSummaryOpen &&
-        approvalSummary &&
-        approvalSummary.current_user_is_submitter && (
+        approvalSummary && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
             <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
               <h3 className="text-lg font-semibold text-foreground">
@@ -2922,58 +4391,97 @@ export default function RequirementsDocumentPage() {
                 </p>
               </div>
 
-              <div className="mt-5 overflow-hidden rounded-xl border border-border">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-muted/40 text-left text-foreground">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Approver</th>
-                      <th className="px-4 py-3 font-medium">Email</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium">Date</th>
-                    </tr>
-                  </thead>
+              <div className="mt-5 space-y-4">
+                {(approvalSummary.requirements || []).length === 0 ? (
+                  <div className="rounded-xl border border-border bg-background p-4 text-sm text-muted-foreground">
+                    No requirement approval details found.
+                  </div>
+                ) : (
+                  (approvalSummary.requirements || []).map((requirementSummary) => {
+                    const requirement = requirements.find(
+                      (item) => item.id === requirementSummary.item_id
+                    )
+                    const approvalDecisionStatus = getApprovalDecisionStatus(
+                      requirementSummary
+                    )
+                    const approvalDecisionLabel = getApprovalDecisionLabel(
+                      requirementSummary
+                    )
 
-                  <tbody>
-                    {approvalSummary.approvers.map((approver) => (
-                      <tr
-                        key={approver.user_id}
-                        className="border-t border-border"
+                    return (
+                      <div
+                        key={requirementSummary.item_id}
+                        className="rounded-xl border border-border bg-background p-4"
                       >
-                        <td className="px-4 py-3 text-foreground">
-                          {approver.full_name}
-                        </td>
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="font-medium text-foreground">
+                              {requirement?.requirement_code || `Requirement #${requirementSummary.item_id}`}
+                            </p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {requirement?.title || "-"}
+                            </p>
+                          </div>
 
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {approver.email}
-                        </td>
-
-                        <td className="px-4 py-3">
                           <span
-                            className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getApprovalStatusClasses(
-                              approver.status
+                            className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ${getApprovalStatusClasses(
+                              approvalDecisionStatus
                             )}`}
                           >
-                            {approver.status}
+                            {approvalDecisionLabel} · {requirementSummary.approved_count}/{requirementSummary.total_required} approved
                           </span>
+                        </div>
 
-                          {approver.rejection_reason && (
-                            <p className="mt-1 text-xs text-red-600">
-                              Reason: {approver.rejection_reason}
-                            </p>
-                          )}
-                        </td>
-
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {approver.approved_at
-                            ? formatDateTime(approver.approved_at)
-                            : approver.rejected_at
-                              ? formatDateTime(approver.rejected_at)
-                              : "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        <div className="mt-4 overflow-hidden rounded-lg border border-border">
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-muted/40 text-left text-foreground">
+                              <tr>
+                                <th className="px-4 py-3 font-medium">Approver</th>
+                                <th className="px-4 py-3 font-medium">Status</th>
+                                <th className="px-4 py-3 font-medium">Due</th>
+                                <th className="px-4 py-3 font-medium">Date</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {requirementSummary.approvers.map((approver) => (
+                                <tr key={approver.user_id} className="border-t border-border">
+                                  <td className="px-4 py-3">
+                                    <p className="text-foreground">{approver.full_name}</p>
+                                    <p className="text-xs text-muted-foreground">{approver.email}</p>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getApprovalStatusClasses(
+                                        approver.status
+                                      )}`}
+                                    >
+                                      {approver.auto_approved_at ? "Auto Approved" : approver.status}
+                                    </span>
+                                    {approver.rejection_reason && (
+                                      <p className="mt-1 text-xs text-red-600">
+                                        Reason: {approver.rejection_reason}
+                                      </p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-muted-foreground">
+                                    {formatDateTime(approver.review_due_at)}
+                                  </td>
+                                  <td className="px-4 py-3 text-muted-foreground">
+                                    {approver.approved_at
+                                      ? formatDateTime(approver.approved_at)
+                                      : approver.rejected_at
+                                        ? formatDateTime(approver.rejected_at)
+                                        : "-"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
               </div>
 
               <div className="mt-6 flex justify-end">
@@ -2989,15 +4497,65 @@ export default function RequirementsDocumentPage() {
           </div>
         )}
 
+      {isSubmitApprovalModalOpen && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              {isResubmittingRejectedRequirements
+                ? "Resubmit Rejected Requirements for Approval"
+                : "Submit All Requirements for Approval"}
+            </h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              {isResubmittingRejectedRequirements
+                ? `This will resubmit only the ${submitApprovalRequirementCount} rejected requirement(s). Requirements that are already approved will stay approved and will not be sent for another approval cycle.`
+                : "This will submit all requirements in this document. The submitter is excluded from approval voting. Enter how many days project members are allowed to review before pending votes are automatically approved."}
+            </p>
+
+            <label className="mt-4 block text-sm font-medium text-foreground">
+              Review days
+              <input
+                type="number"
+                min="1"
+                value={reviewDays}
+                onChange={(event) => setReviewDays(event.target.value)}
+                className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsSubmitApprovalModalOpen(false)}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={submitForApproval}
+                disabled={isActionLoading("submit-approval")}
+                className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                {isActionLoading("submit-approval")
+                  ? "Submitting..."
+                  : "Submit for Approval"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isRejectModalOpen && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
             <h3 className="text-lg font-semibold text-foreground">
-              Reject Requirement Document
+              Reject Selected Requirement(s)
             </h3>
 
             <p className="mt-3 text-sm text-muted-foreground">
-              Add the reason why this requirements document needs revision.
+              Add the reason why the selected requirement(s) need revision.
             </p>
 
             <textarea
@@ -3029,6 +4587,70 @@ export default function RequirementsDocumentPage() {
                 {isActionLoading("reject-document")
                   ? "Rejecting..."
                   : "Confirm Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {changeRequestDecisionTarget && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl ring-1 ring-border">
+            <h3 className="text-lg font-semibold text-foreground">
+              {changeRequestDecision === "Proceed"
+                ? "Proceed with Change Request"
+                : "Decline Change Request"}
+            </h3>
+
+            <p className="mt-3 text-sm text-muted-foreground">
+              The requester will be notified after all assigned stakeholders have submitted their decision.
+            </p>
+
+            <label className="mt-4 block text-sm font-medium text-foreground">
+              Decision note
+              <textarea
+                value={changeRequestDecisionNote}
+                onChange={(event) =>
+                  setChangeRequestDecisionNote(event.target.value)
+                }
+                rows={5}
+                placeholder={
+                  changeRequestDecision === "Proceed"
+                    ? "Optional stakeholder decision note..."
+                    : "Required reason why you are declining this change request..."
+                }
+                className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeChangeRequestDecisionModal}
+                className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={decideChangeRequest}
+                disabled={isActionLoading(
+                  `decide-change-request-${changeRequestDecisionTarget.id}`
+                )}
+                className={`rounded-lg px-4 py-2 text-white disabled:opacity-60 ${
+                  changeRequestDecision === "Proceed"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-destructive hover:bg-destructive/90"
+                }`}
+              >
+                {isActionLoading(
+                  `decide-change-request-${changeRequestDecisionTarget.id}`
+                )
+                  ? "Saving..."
+                  : changeRequestDecision === "Proceed"
+                    ? "Confirm Proceed"
+                    : "Confirm Decline"}
               </button>
             </div>
           </div>
