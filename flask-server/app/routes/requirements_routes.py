@@ -230,6 +230,21 @@ def get_required_requirement_approvers(project_id, document=None):
         if member.user_id in seen_user_ids:
             continue
 
+        can_approve = user_has_permission(
+            member.user_id,
+            "requirements.approve",
+            project_id,
+        )
+
+        can_reject = user_has_permission(
+            member.user_id,
+            "requirements.reject",
+            project_id,
+        )
+
+        if not can_approve and not can_reject:
+            continue
+
         unique_members.append(member)
         seen_user_ids.add(member.user_id)
 
@@ -658,14 +673,37 @@ def build_requirement_approval_summary(document, item, template=None, apply_auto
     is_decision_complete = bool(submitted and total_required > 0 and pending_count == 0)
 
     current_user_record = record_by_user_id.get(current_user_id)
-    current_user_has_approved = bool(current_user_record and current_user_record.status == "Approved")
-    current_user_has_rejected = bool(current_user_record and current_user_record.status == "Rejected")
+    current_user_has_approved = bool(
+        current_user_record and current_user_record.status == "Approved"
+    )
+    current_user_has_rejected = bool(
+        current_user_record and current_user_record.status == "Rejected"
+    )
     current_user_is_required_approver = current_user_id in required_user_ids
-    current_user_can_vote = bool(
+
+    current_user_has_pending_vote = bool(
         document.status == "For Approval"
         and current_user_is_required_approver
         and current_user_record
         and current_user_record.status == "Pending"
+    )
+
+    current_user_can_approve = bool(
+        current_user_has_pending_vote
+        and user_has_permission(
+            current_user_id,
+            "requirements.approve",
+            document.project_id,
+        )
+    )
+
+    current_user_can_reject = bool(
+        current_user_has_pending_vote
+        and user_has_permission(
+            current_user_id,
+            "requirements.reject",
+            document.project_id,
+        )
     )
 
     is_rejected = is_decision_complete and has_rejection_votes
@@ -689,8 +727,8 @@ def build_requirement_approval_summary(document, item, template=None, apply_auto
         "current_user_is_required_approver": current_user_is_required_approver,
         "current_user_has_approved": current_user_has_approved,
         "current_user_has_rejected": current_user_has_rejected,
-        "current_user_can_approve": current_user_can_vote,
-        "current_user_can_reject": current_user_can_vote,
+        "current_user_can_approve": current_user_can_approve,
+        "current_user_can_reject": current_user_can_reject,
         "approvers": approvers,
         "note": (
             "A rejection vote has been recorded. Final requirement status will be decided after all required votes are complete."
@@ -1236,7 +1274,7 @@ def submit_requirement_document_for_approval(project_id, document_id):
     )
 
     if not created_records:
-        return jsonify({"message": "No project members are available to approve these requirements"}), 400
+        return jsonify({"message": "No project members with approval or rejection permission are available to approve these requirements"}), 400
 
     link = (
         f"/stakeholder/projects/requirements-document"
@@ -1244,19 +1282,34 @@ def submit_requirement_document_for_approval(project_id, document_id):
     )
 
     notification_scope = "rejected requirement(s)" if is_resubmission else "requirement(s)"
+    notified_user_ids = set()
+    notification_count = 0
 
-    create_project_member_notifications(
-        project_id=project_id,
-        document_id=document_id,
-        title="Requirement Approval Needed",
-        message=(
-            f"{len(items)} {notification_scope} in Requirements Document v{document.version} "
-            f"are waiting for your approval within {review_days} day(s)."
-        ),
-        notification_type="requirement_approval_request",
-        link=link,
-        exclude_user_ids=[get_active_user_id()],
-    )
+    for record in created_records:
+        if not record.user_id:
+            continue
+
+        if record.user_id == get_active_user_id():
+            continue
+
+        if record.user_id in notified_user_ids:
+            continue
+
+        create_notification(
+            user_id=record.user_id,
+            project_id=project_id,
+            document_id=document_id,
+            title="Requirement Approval Needed",
+            message=(
+                f"{len(items)} {notification_scope} in Requirements Document v{document.version} "
+                f"are waiting for your approval within {review_days} day(s)."
+            ),
+            notification_type="requirement_approval_request",
+            link=link,
+        )
+
+        notified_user_ids.add(record.user_id)
+        notification_count += 1
 
     db.session.commit()
 
@@ -1270,6 +1323,7 @@ def submit_requirement_document_for_approval(project_id, document_id):
         "approval_summary": build_approval_summary(document),
         "requirements": build_all_requirement_item_summaries(document, template),
         "changed_requirement_ids": [item.id for item in items],
+        "notification_count": notification_count,
     }), 200
 
 
@@ -1279,9 +1333,7 @@ def request_requirement_items_for_approval(project_id, document_id):
     return submit_requirement_document_for_approval(project_id, document_id)
 
 
-@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/approve", methods=["POST"])
-@require_permission("requirements.view", project_arg="project_id")
-def approve_requirement_document(project_id, document_id):
+def handle_approve_requirement_items(project_id, document_id):
     current_user_id = get_active_user_id()
 
     if not current_user_id:
@@ -1386,15 +1438,19 @@ def approve_requirement_document(project_id, document_id):
     }), 200
 
 
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/approve", methods=["POST"])
+@require_permission("requirements.approve", project_arg="project_id")
+def approve_requirement_document(project_id, document_id):
+    return handle_approve_requirement_items(project_id, document_id)
+
+
 @requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/approve", methods=["POST"])
-@require_permission("requirements.view", project_arg="project_id")
+@require_permission("requirements.approve", project_arg="project_id")
 def approve_requirement_items(project_id, document_id):
-    return approve_requirement_document(project_id, document_id)
+    return handle_approve_requirement_items(project_id, document_id)
 
 
-@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/reject", methods=["POST"])
-@require_permission("requirements.view", project_arg="project_id")
-def reject_requirement_document(project_id, document_id):
+def handle_reject_requirement_items(project_id, document_id):
     current_user_id = get_active_user_id()
 
     if not current_user_id:
@@ -1501,10 +1557,16 @@ def reject_requirement_document(project_id, document_id):
     }), 200
 
 
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/reject", methods=["POST"])
+@require_permission("requirements.reject", project_arg="project_id")
+def reject_requirement_document(project_id, document_id):
+    return handle_reject_requirement_items(project_id, document_id)
+
+
 @requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/reject", methods=["POST"])
-@require_permission("requirements.view", project_arg="project_id")
+@require_permission("requirements.reject", project_arg="project_id")
 def reject_requirement_items(project_id, document_id):
-    return reject_requirement_document(project_id, document_id)
+    return handle_reject_requirement_items(project_id, document_id)
 
 
 @requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/freeze", methods=["POST"])
