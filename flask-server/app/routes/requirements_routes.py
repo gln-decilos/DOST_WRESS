@@ -1,4 +1,5 @@
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request, session
 from app.extensions import db
@@ -11,6 +12,7 @@ from app.models.requirement_item_value import RequirementItemValue
 from app.models.notification import Notification
 from app.models.requirement_approval import RequirementApproval
 from app.models.requirement_comment import RequirementComment
+from app.models.requirement_change_log import RequirementChangeLog
 from app.models.user_roles import UserRole
 from app.utils.permissions import (
     get_current_user_id,
@@ -35,6 +37,7 @@ REQUIREMENT_DESCRIPTION_KEYS = ["description", "requirement_description"]
 REQUIREMENT_RATIONALE_KEYS = ["rationale", "requirement_rationale"]
 REQUIREMENT_PRIORITY_KEYS = ["priority", "requirement_priority"]
 REQUIREMENT_STATUS_KEYS = ["status", "requirement_status"]
+DEFAULT_REQUIREMENT_REVIEW_DAYS = 3
 
 
 def parse_int(value):
@@ -148,16 +151,71 @@ def create_project_member_notifications(
         notified_user_ids.add(member.user_id)
 
 
+def get_user_project_role_label(user_id, project_id):
+    if not user_id or not project_id:
+        return None
+
+    user_roles = (
+        UserRole.query
+        .filter(
+            UserRole.user_id == user_id,
+            UserRole.project_id == project_id,
+        )
+        .all()
+    )
+
+    role_names = []
+
+    for user_role in user_roles:
+        role = getattr(user_role, "role", None)
+
+        if isinstance(role, str) and role.strip():
+            role_names.append(role.strip())
+
+        if role and not isinstance(role, str):
+            for attr_name in ["name", "role_name", "label", "title"]:
+                value = getattr(role, attr_name, None)
+
+                if value:
+                    role_names.append(str(value).strip())
+                    break
+
+        for attr_name in ["role_name", "name", "label", "title"]:
+            value = getattr(user_role, attr_name, None)
+
+            if value and isinstance(value, str):
+                role_names.append(value.strip())
+
+    unique_role_names = []
+
+    for role_name in role_names:
+        if role_name and role_name not in unique_role_names:
+            unique_role_names.append(role_name)
+
+    return ", ".join(unique_role_names) if unique_role_names else None
+
+
+def serialize_requirement_change_log(log):
+    data = log.to_dict()
+    actor_role = get_user_project_role_label(log.changed_by, log.project_id)
+
+    data["actor_role"] = actor_role
+
+    if data.get("user"):
+        data["user"]["project_role"] = actor_role
+        data["user"]["role"] = actor_role
+
+    return data
+
+
 def get_required_requirement_approvers(project_id, document=None):
-    current_user_id = get_active_user_id()
-    submitter_id = document.created_by if document else current_user_id
+    submitter_user_id = document.created_by if document else None
 
     project_members = (
         UserRole.query
         .filter(
             UserRole.project_id == project_id,
             UserRole.user_id.isnot(None),
-            UserRole.user_id != submitter_id,
         )
         .all()
     )
@@ -166,6 +224,9 @@ def get_required_requirement_approvers(project_id, document=None):
     seen_user_ids = set()
 
     for member in project_members:
+        if submitter_user_id and member.user_id == submitter_user_id:
+            continue
+
         if member.user_id in seen_user_ids:
             continue
 
@@ -173,6 +234,23 @@ def get_required_requirement_approvers(project_id, document=None):
         seen_user_ids.add(member.user_id)
 
     return unique_members
+
+
+def get_required_requirement_approver_user_ids(project_id):
+    return [
+        member.user_id
+        for member in get_required_requirement_approvers(project_id)
+        if member.user_id
+    ]
+
+
+def parse_review_days(value):
+    parsed = parse_int(value)
+
+    if not parsed or parsed < 1:
+        return DEFAULT_REQUIREMENT_REVIEW_DAYS
+
+    return parsed
 
 
 def pick_first_value(values: dict, keys: list[str], default_value: str = ""):
@@ -328,38 +406,18 @@ def normalize_item_payload(values_input, template):
 
 
 def build_requirement_item_summary(item: RequirementItem, template: DocumentTemplate | None):
-    keyed_values = build_item_values_by_key(item, template)
+    summary = build_requirement_item_summary_without_approval(item, template)
 
-    requirement_code = pick_first_value(
-        keyed_values,
-        REQUIREMENT_CODE_KEYS,
-        f"REQ-{item.id:03d}"
-    )
-    title = pick_first_value(keyed_values, REQUIREMENT_TITLE_KEYS, "-")
-    description = pick_first_value(keyed_values, REQUIREMENT_DESCRIPTION_KEYS, "")
-    rationale = pick_first_value(keyed_values, REQUIREMENT_RATIONALE_KEYS, "")
-    priority = pick_first_value(keyed_values, REQUIREMENT_PRIORITY_KEYS, "Medium")
-    status = pick_first_value(keyed_values, REQUIREMENT_STATUS_KEYS, "Draft")
+    if item and item.document:
+        summary["approval_summary"] = build_requirement_approval_summary(
+            item.document,
+            item,
+            template,
+        )
+    else:
+        summary["approval_summary"] = None
 
-    comment_count = RequirementComment.query.filter_by(
-        item_id=item.id
-    ).count()
-
-    return {
-        "id": item.id,
-        "project_document_id": item.project_document_id,
-        "requirement_code": requirement_code,
-        "title": title,
-        "description": description,
-        "rationale": rationale,
-        "priority": priority,
-        "status": status,
-        "sort_order": item.sort_order,
-        "created_by": item.created_by,
-        "comment_count": comment_count,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-    }
+    return summary
 
 
 def build_requirement_document_summary(document: ProjectDocument):
@@ -378,51 +436,191 @@ def build_requirement_document_summary(document: ProjectDocument):
     }
 
 
-def build_approval_summary(document):
-    current_user_id = get_active_user_id()
+def get_requirement_status_template_field(template):
+    if not template:
+        return None
 
-    required_members = get_required_requirement_approvers(
-        project_id=document.project_id,
-        document=document
+    for section in template.sections:
+        for field in section.fields:
+            if field.key in REQUIREMENT_STATUS_KEYS:
+                return field
+
+    return None
+
+
+def set_requirement_item_status(item, template, status):
+    status_field = get_requirement_status_template_field(template)
+
+    if not status_field:
+        return
+
+    existing_value = RequirementItemValue.query.filter_by(
+        item_id=item.id,
+        template_field_id=status_field.id,
+    ).first()
+
+    if existing_value:
+        existing_value.value_text = status
+        return
+
+    db.session.add(RequirementItemValue(
+        item_id=item.id,
+        template_field_id=status_field.id,
+        value_text=status,
+    ))
+
+
+def build_requirement_change_snapshot(item, template):
+    keyed_values = build_item_values_by_key(item, template)
+
+    return {
+        "summary": build_requirement_item_summary_without_approval(item, template),
+        "values": keyed_values,
+    }
+
+
+def create_requirement_change_log(
+    project_id,
+    document_id,
+    item_id,
+    action,
+    description=None,
+    before_snapshot=None,
+    after_snapshot=None,
+    changed_by="__current_user__",
+):
+    actor_id = get_active_user_id() if changed_by == "__current_user__" else changed_by
+
+    db.session.add(RequirementChangeLog(
+        project_id=project_id,
+        document_id=document_id,
+        item_id=item_id,
+        action=action,
+        description=description,
+        before_snapshot=json.dumps(before_snapshot) if before_snapshot is not None else None,
+        after_snapshot=json.dumps(after_snapshot) if after_snapshot is not None else None,
+        changed_by=actor_id,
+    ))
+
+
+def build_requirement_item_summary_without_approval(item: RequirementItem, template: DocumentTemplate | None):
+    keyed_values = build_item_values_by_key(item, template)
+
+    requirement_code = pick_first_value(
+        keyed_values,
+        REQUIREMENT_CODE_KEYS,
+        f"REQ-{item.id:03d}"
+    )
+    title = pick_first_value(keyed_values, REQUIREMENT_TITLE_KEYS, "-")
+    description = pick_first_value(keyed_values, REQUIREMENT_DESCRIPTION_KEYS, "")
+    rationale = pick_first_value(keyed_values, REQUIREMENT_RATIONALE_KEYS, "")
+    priority = pick_first_value(keyed_values, REQUIREMENT_PRIORITY_KEYS, "Medium")
+    status = pick_first_value(keyed_values, REQUIREMENT_STATUS_KEYS, "Draft")
+
+    comment_count = RequirementComment.query.filter_by(
+        item_id=item.id
+    ).count()
+
+    change_log_count = RequirementChangeLog.query.filter_by(
+        item_id=item.id
+    ).count()
+
+    return {
+        "id": item.id,
+        "project_document_id": item.project_document_id,
+        "requirement_code": requirement_code,
+        "title": title,
+        "description": description,
+        "rationale": rationale,
+        "priority": priority,
+        "status": status,
+        "sort_order": item.sort_order,
+        "created_by": item.created_by,
+        "comment_count": comment_count,
+        "change_log_count": change_log_count,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+def get_requirement_approval_records(item_id):
+    return (
+        RequirementApproval.query
+        .filter_by(item_id=item_id)
+        .all()
     )
 
-    required_user_ids = [
-        member.user_id
-        for member in required_members
-        if member.user_id
-    ]
+
+def get_approval_record_for_current_user(item_id):
+    current_user_id = get_active_user_id()
+
+    if not current_user_id:
+        return None
+
+    return RequirementApproval.query.filter_by(
+        item_id=item_id,
+        user_id=current_user_id,
+    ).first()
+
+
+def apply_auto_approvals_for_requirement(document, item, template=None):
+    now = datetime.utcnow()
+    pending_records = (
+        RequirementApproval.query
+        .filter(
+            RequirementApproval.item_id == item.id,
+            RequirementApproval.status == "Pending",
+            RequirementApproval.review_due_at.isnot(None),
+            RequirementApproval.review_due_at <= now,
+        )
+        .all()
+    )
+
+    if not pending_records:
+        return False
+
+    for record in pending_records:
+        record.status = "Approved"
+        record.approved_at = now
+        record.auto_approved_at = now
+        record.rejected_at = None
+        record.rejection_reason = None
+
+        create_requirement_change_log(
+            project_id=document.project_id,
+            document_id=document.id,
+            item_id=item.id,
+            action="auto_approved",
+            description=f"Requirement was automatically approved for user ID {record.user_id} because the review window expired.",
+            changed_by=None,
+        )
+
+    update_requirement_item_approval_status(document, item, template, apply_auto=False)
+    return True
+
+
+def build_requirement_approval_summary(document, item, template=None, apply_auto=True):
+    if apply_auto:
+        apply_auto_approvals_for_requirement(document, item, template)
+
+    current_user_id = get_active_user_id()
+    required_members = get_required_requirement_approvers(document.project_id, document)
+    required_user_ids = [member.user_id for member in required_members if member.user_id]
 
     approval_records = []
-
     if required_user_ids:
         approval_records = (
             RequirementApproval.query
             .filter(
-                RequirementApproval.document_id == document.id,
-                RequirementApproval.user_id.in_(required_user_ids)
+                RequirementApproval.item_id == item.id,
+                RequirementApproval.user_id.in_(required_user_ids),
             )
             .all()
         )
 
-    record_by_user_id = {
-        approval.user_id: approval
-        for approval in approval_records
-    }
-
-    approved_records = [
-        approval
-        for approval in approval_records
-        if approval.status == "Approved"
-    ]
-
-    rejected_records = [
-        approval
-        for approval in approval_records
-        if approval.status == "Rejected"
-    ]
+    record_by_user_id = {approval.user_id: approval for approval in approval_records}
 
     approvers = []
-
     for member in required_members:
         approval = record_by_user_id.get(member.user_id)
         user = member.user
@@ -436,51 +634,196 @@ def build_approval_summary(document):
             full_name = f"{first_name} {last_name}".strip() or user.email
             email = user.email
 
-        status = "Pending"
-
-        if approval:
-            status = approval.status
+        status = approval.status if approval else "Pending"
 
         approvers.append({
             "user_id": member.user_id,
             "full_name": full_name,
             "email": email,
             "status": status,
-            "approved_at": (
-                approval.approved_at.isoformat()
-                if approval and approval.approved_at else None
-            ),
-            "rejected_at": (
-                approval.rejected_at.isoformat()
-                if approval and approval.rejected_at else None
-            ),
+            "review_requested_at": approval.review_requested_at.isoformat() if approval and approval.review_requested_at else None,
+            "review_due_at": approval.review_due_at.isoformat() if approval and approval.review_due_at else None,
+            "approved_at": approval.approved_at.isoformat() if approval and approval.approved_at else None,
+            "rejected_at": approval.rejected_at.isoformat() if approval and approval.rejected_at else None,
+            "auto_approved_at": approval.auto_approved_at.isoformat() if approval and approval.auto_approved_at else None,
             "rejection_reason": approval.rejection_reason if approval else None,
         })
 
-    approved_count = len(approved_records)
-    rejected_count = len(rejected_records)
+    approved_count = len([record for record in approval_records if record.status == "Approved"])
+    rejected_count = len([record for record in approval_records if record.status == "Rejected"])
     total_required = len(required_user_ids)
     pending_count = max(total_required - approved_count - rejected_count, 0)
+    submitted = bool(approval_records)
+    has_rejection_votes = rejected_count > 0
+    is_decision_complete = bool(submitted and total_required > 0 and pending_count == 0)
 
     current_user_record = record_by_user_id.get(current_user_id)
-
-    current_user_has_approved = bool(
-        current_user_record and current_user_record.status == "Approved"
-    )
-
-    current_user_has_rejected = bool(
-        current_user_record and current_user_record.status == "Rejected"
-    )
-
-    current_user_is_submitter = current_user_id == document.created_by
+    current_user_has_approved = bool(current_user_record and current_user_record.status == "Approved")
+    current_user_has_rejected = bool(current_user_record and current_user_record.status == "Rejected")
     current_user_is_required_approver = current_user_id in required_user_ids
-
-    is_rejected = rejected_count > 0 or document.status == "Rejected"
-    is_fully_approved = (
-        total_required > 0
-        and approved_count >= total_required
-        and rejected_count == 0
+    current_user_can_vote = bool(
+        document.status == "For Approval"
+        and current_user_is_required_approver
+        and current_user_record
+        and current_user_record.status == "Pending"
     )
+
+    is_rejected = is_decision_complete and has_rejection_votes
+    is_fully_approved = is_decision_complete and approved_count >= total_required and not has_rejection_votes
+
+    return {
+        "item_id": item.id,
+        "document_id": document.id,
+        "version": document.version,
+        "status": build_requirement_item_summary_without_approval(item, template).get("status"),
+        "submitted": submitted,
+        "approved": is_fully_approved,
+        "rejected": is_rejected,
+        "has_rejection_votes": has_rejection_votes,
+        "is_decision_complete": is_decision_complete,
+        "total_required": total_required,
+        "approved_count": approved_count,
+        "rejected_count": rejected_count,
+        "pending_count": pending_count,
+        "is_fully_approved": is_fully_approved,
+        "current_user_is_required_approver": current_user_is_required_approver,
+        "current_user_has_approved": current_user_has_approved,
+        "current_user_has_rejected": current_user_has_rejected,
+        "current_user_can_approve": current_user_can_vote,
+        "current_user_can_reject": current_user_can_vote,
+        "approvers": approvers,
+        "note": (
+            "A rejection vote has been recorded. Final requirement status will be decided after all required votes are complete."
+            if has_rejection_votes and pending_count > 0
+            else "This requirement was rejected after all required votes were completed."
+            if is_rejected
+            else "All required project members have approved this requirement."
+            if is_fully_approved
+            else "Waiting for all required project members to approve or reject this requirement."
+        ),
+    }
+
+
+def update_requirement_item_approval_status(document, item, template=None, apply_auto=True):
+    template = template or DocumentTemplate.query.get(document.template_id)
+    summary = build_requirement_approval_summary(document, item, template, apply_auto=apply_auto)
+
+    if summary["submitted"] and summary["pending_count"] > 0:
+        set_requirement_item_status(item, template, "For Approval")
+    elif summary["rejected"]:
+        set_requirement_item_status(item, template, "Rejected")
+    elif summary["is_fully_approved"]:
+        set_requirement_item_status(item, template, "Approved")
+    elif summary["submitted"]:
+        set_requirement_item_status(item, template, "For Approval")
+
+    return summary
+
+
+def recompute_document_approval_status(document, template=None):
+    template = template or DocumentTemplate.query.get(document.template_id)
+    items = list(document.requirement_items or [])
+
+    if not items:
+        return document.status
+
+    item_summaries = []
+    for item in items:
+        approval_summary = update_requirement_item_approval_status(document, item, template)
+        item_summaries.append(approval_summary)
+
+    submitted_summaries = [summary for summary in item_summaries if summary["submitted"]]
+
+    if not submitted_summaries:
+        return document.status
+
+    if any(summary["pending_count"] > 0 for summary in submitted_summaries):
+        document.status = "For Approval"
+    elif any(summary["rejected"] for summary in submitted_summaries):
+        document.status = "Rejected"
+    elif len(submitted_summaries) == len(items) and all(
+        summary["is_fully_approved"] for summary in submitted_summaries
+    ):
+        document.status = "Approved"
+    else:
+        document.status = "For Approval"
+
+    return document.status
+
+
+def ensure_requirement_approval_records(document, items, review_days=None):
+    current_user_id = get_active_user_id()
+    now = datetime.utcnow()
+    review_days = parse_review_days(review_days)
+    review_due_at = now + timedelta(days=review_days)
+    required_members = get_required_requirement_approvers(document.project_id, document)
+
+    if not required_members:
+        return []
+
+    template = DocumentTemplate.query.get(document.template_id)
+    created_records = []
+
+    for item in items:
+        RequirementApproval.query.filter_by(item_id=item.id).delete(synchronize_session=False)
+        set_requirement_item_status(item, template, "For Approval")
+
+        create_requirement_change_log(
+            project_id=document.project_id,
+            document_id=document.id,
+            item_id=item.id,
+            action="review_requested",
+            description=f"Approval review requested. Voting window: {review_days} day(s).",
+            after_snapshot=build_requirement_change_snapshot(item, template),
+            changed_by=current_user_id,
+        )
+
+        for member in required_members:
+            approval = RequirementApproval(
+                project_id=document.project_id,
+                document_id=document.id,
+                item_id=item.id,
+                user_id=member.user_id,
+                status="Pending",
+                review_requested_at=now,
+                review_due_at=review_due_at,
+                requested_by=current_user_id,
+            )
+            db.session.add(approval)
+            created_records.append(approval)
+
+    document.status = "For Approval"
+    return created_records
+
+
+def build_approval_summary(document):
+    template = DocumentTemplate.query.get(document.template_id)
+    requirement_summaries = []
+
+    for item in document.requirement_items or []:
+        requirement_summaries.append(build_requirement_approval_summary(document, item, template))
+
+    if requirement_summaries:
+        recompute_document_approval_status(document, template)
+
+    total_required_votes = sum(summary["total_required"] for summary in requirement_summaries)
+    approved_count = sum(summary["approved_count"] for summary in requirement_summaries)
+    rejected_count = sum(summary["rejected_count"] for summary in requirement_summaries)
+    pending_count = sum(summary["pending_count"] for summary in requirement_summaries)
+
+    current_user_can_approve = any(summary["current_user_can_approve"] for summary in requirement_summaries)
+    current_user_can_reject = any(summary["current_user_can_reject"] for summary in requirement_summaries)
+    current_user_has_approved = bool(requirement_summaries) and all(
+        summary["current_user_has_approved"] or not summary["current_user_is_required_approver"]
+        for summary in requirement_summaries
+    )
+    current_user_has_rejected = any(summary["current_user_has_rejected"] for summary in requirement_summaries)
+    is_fully_approved = bool(requirement_summaries) and all(
+        summary["is_fully_approved"] for summary in requirement_summaries
+    )
+    has_rejection_votes = any(summary.get("has_rejection_votes") for summary in requirement_summaries)
+    is_rejected = any(summary["rejected"] for summary in requirement_summaries)
+    current_user_id = get_active_user_id()
 
     return {
         "document_id": document.id,
@@ -488,38 +831,54 @@ def build_approval_summary(document):
         "status": document.status,
         "submitted": document.status in ["For Approval", "Approved", "Rejected", "Frozen", "Unfrozen"],
         "approved": document.status in ["Approved", "Frozen", "Unfrozen"],
-        "rejected": is_rejected,
+        "rejected": is_rejected or document.status == "Rejected",
+        "has_rejection_votes": has_rejection_votes,
         "frozen": document.status == "Frozen",
-        "total_required": total_required,
+        "total_required": total_required_votes,
         "approved_count": approved_count,
         "rejected_count": rejected_count,
         "pending_count": pending_count,
         "is_fully_approved": is_fully_approved,
-        "current_user_is_submitter": current_user_is_submitter,
-        "current_user_is_required_approver": current_user_is_required_approver,
+        "current_user_is_submitter": current_user_id == document.created_by,
+        "current_user_is_required_approver": any(
+            summary["current_user_is_required_approver"]
+            for summary in requirement_summaries
+        ),
         "current_user_has_approved": current_user_has_approved,
         "current_user_has_rejected": current_user_has_rejected,
-        "current_user_can_approve": (
-            document.status == "For Approval"
-            and current_user_is_required_approver
-            and not current_user_has_approved
-            and not current_user_has_rejected
-        ),
-        "current_user_can_reject": (
-            document.status == "For Approval"
-            and current_user_is_required_approver
-            and not current_user_has_approved
-            and not current_user_has_rejected
-        ),
-        "approvers": approvers,
+        "current_user_can_approve": current_user_can_approve,
+        "current_user_can_reject": current_user_can_reject,
+        "requirements": requirement_summaries,
+        "approvers": [],
         "note": (
-            "This document was rejected and needs revision."
+            "One or more rejection votes were recorded. Final document status will be decided after all required votes are complete."
+            if has_rejection_votes and pending_count > 0
+            else "One or more requirements were rejected after all required votes were completed."
             if is_rejected
-            else "All required project members have approved this document."
+            else "All requirements have been approved by all required project members."
             if is_fully_approved
-            else "Waiting for all required project members to approve this document."
+            else "Waiting for project members to approve or reject each requirement."
         ),
     }
+
+
+def get_requirement_items_for_action(document, item_ids=None):
+    query = RequirementItem.query.filter_by(project_document_id=document.id)
+
+    if item_ids:
+        query = query.filter(RequirementItem.id.in_(item_ids))
+
+    return query.order_by(RequirementItem.sort_order.asc(), RequirementItem.created_at.asc()).all()
+
+
+def build_all_requirement_item_summaries(document, template=None):
+    template = template or DocumentTemplate.query.get(document.template_id)
+    items = get_requirement_items_for_action(document)
+
+    return [
+        build_requirement_item_summary(item, template)
+        for item in items
+    ]
 
 
 def serialize_requirement_comment(comment):
@@ -706,6 +1065,10 @@ def get_requirement_document_details(project_id, document_id):
         for item in (document.requirement_items or [])
     ]
 
+    if document.status == "For Approval":
+        recompute_document_approval_status(document, document_template)
+        db.session.commit()
+
     return jsonify({
         "document_summary": build_requirement_document_summary(document),
         "document": document.to_dict(include_requirement_items=True),
@@ -830,23 +1193,67 @@ def submit_requirement_document_for_approval(project_id, document_id):
             "message": "Only draft or rejected documents can be submitted for approval"
         }), 400
 
-    document.status = "For Approval"
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get("item_ids") or []
+    review_days = parse_review_days(data.get("review_days"))
 
-    RequirementApproval.query.filter_by(
-        document_id=document.id
-    ).delete(synchronize_session=False)
+    if item_ids and not isinstance(item_ids, list):
+        return jsonify({"message": "item_ids must be a list"}), 400
+
+    item_ids = [parse_int(item_id) for item_id in item_ids]
+    item_ids = [item_id for item_id in item_ids if item_id]
+
+    requested_items = get_requirement_items_for_action(document, item_ids)
+
+    if item_ids and len(requested_items) != len(set(item_ids)):
+        return jsonify({"message": "One or more selected requirements were not found"}), 404
+
+    template = DocumentTemplate.query.get(document.template_id)
+
+    if document.status == "Rejected":
+        items = [
+            item
+            for item in requested_items
+            if build_requirement_item_summary_without_approval(item, template).get("status") == "Rejected"
+        ]
+
+        if not items:
+            return jsonify({
+                "message": "Only rejected requirements can be resubmitted. Approved requirements will remain approved."
+            }), 400
+    else:
+        items = requested_items
+
+    if not items:
+        return jsonify({"message": "Add at least one requirement before requesting approval"}), 400
+
+    is_resubmission = document.status == "Rejected"
+
+    created_records = ensure_requirement_approval_records(
+        document=document,
+        items=items,
+        review_days=review_days,
+    )
+
+    if not created_records:
+        return jsonify({"message": "No project members are available to approve these requirements"}), 400
 
     link = (
         f"/stakeholder/projects/requirements-document"
         f"?id={document_id}&projectId={project_id}"
     )
 
+    notification_scope = "rejected requirement(s)" if is_resubmission else "requirement(s)"
+
     create_project_member_notifications(
         project_id=project_id,
         document_id=document_id,
-        title="Requirements Approval Needed",
-        message=f"Requirements Document v{document.version} is waiting for your approval.",
-        notification_type="requirements_approval_request",
+        title="Requirement Approval Needed",
+        message=(
+            f"{len(items)} {notification_scope} in Requirements Document v{document.version} "
+            f"are waiting for your approval within {review_days} day(s)."
+        ),
+        notification_type="requirement_approval_request",
         link=link,
         exclude_user_ids=[get_active_user_id()],
     )
@@ -854,10 +1261,22 @@ def submit_requirement_document_for_approval(project_id, document_id):
     db.session.commit()
 
     return jsonify({
-        "message": "Requirement document submitted for approval",
+        "message": (
+            "Rejected requirement(s) resubmitted for approval"
+            if is_resubmission
+            else "All requirements submitted for approval"
+        ),
         "document": build_requirement_document_summary(document),
         "approval_summary": build_approval_summary(document),
+        "requirements": build_all_requirement_item_summaries(document, template),
+        "changed_requirement_ids": [item.id for item in items],
     }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/request-approval", methods=["POST"])
+@require_permission("requirements.submit_approval", project_arg="project_id")
+def request_requirement_items_for_approval(project_id, document_id):
+    return submit_requirement_document_for_approval(project_id, document_id)
 
 
 @requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/approve", methods=["POST"])
@@ -875,81 +1294,102 @@ def approve_requirement_document(project_id, document_id):
 
     if document.status != "For Approval":
         return jsonify({
-            "message": "Only documents for approval can be approved"
+            "message": "Only requirements for approval can be approved"
         }), 400
 
     if document.created_by == current_user_id:
         return jsonify({
-            "message": "The submitter cannot approve their own requirement document"
+            "message": "The user who submitted this document does not need to approve their own requirements"
         }), 403
 
-    required_approvers = get_required_requirement_approvers(
-        project_id=project_id,
-        document=document
-    )
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get("item_ids") or []
 
-    required_user_ids = {
-        member.user_id
-        for member in required_approvers
-        if member.user_id
-    }
+    if item_ids and not isinstance(item_ids, list):
+        return jsonify({"message": "item_ids must be a list"}), 400
 
-    if current_user_id not in required_user_ids:
+    item_ids = [parse_int(item_id) for item_id in item_ids]
+    item_ids = [item_id for item_id in item_ids if item_id]
+
+    candidate_items = get_requirement_items_for_action(document, item_ids)
+
+    if item_ids and len(candidate_items) != len(set(item_ids)):
+        return jsonify({"message": "One or more selected requirements were not found"}), 404
+
+    if not candidate_items:
+        return jsonify({"message": "No requirements selected for approval"}), 400
+
+    template = DocumentTemplate.query.get(document.template_id)
+    approved_items = []
+    now = datetime.utcnow()
+
+    for item in candidate_items:
+        approval = RequirementApproval.query.filter_by(
+            item_id=item.id,
+            user_id=current_user_id,
+        ).first()
+
+        if not approval or approval.status != "Pending":
+            continue
+
+        approval.status = "Approved"
+        approval.approved_at = now
+        approval.rejected_at = None
+        approval.rejection_reason = None
+
+        create_requirement_change_log(
+            project_id=project_id,
+            document_id=document.id,
+            item_id=item.id,
+            action="approved",
+            description="Requirement approved by project member.",
+            after_snapshot=build_requirement_change_snapshot(item, template),
+            changed_by=current_user_id,
+        )
+
+        update_requirement_item_approval_status(document, item, template)
+        approved_items.append(item)
+
+    if not approved_items:
         return jsonify({
-            "message": "You are not assigned as an approver for this requirement document"
-        }), 403
-
-    existing_action = RequirementApproval.query.filter_by(
-        document_id=document.id,
-        user_id=current_user_id,
-    ).first()
-
-    if existing_action:
-        return jsonify({
-            "message": "You already responded to this requirement document",
+            "message": "You have no pending approval vote for the selected requirement(s)",
             "document": build_requirement_document_summary(document),
             "approval_summary": build_approval_summary(document),
-        }), 200
+        }), 400
 
-    approval = RequirementApproval(
-        project_id=project_id,
-        document_id=document.id,
-        user_id=current_user_id,
-        status="Approved",
-        approved_at=datetime.utcnow(),
-    )
+    recompute_document_approval_status(document, template)
 
-    db.session.add(approval)
-    db.session.flush()
+    if document.status == "Approved" and document.created_by:
+        link = (
+            f"/stakeholder/projects/requirements-document"
+            f"?id={document_id}&projectId={project_id}"
+        )
 
-    approval_summary = build_approval_summary(document)
-
-    if approval_summary["is_fully_approved"]:
-        document.status = "Approved"
-
-        if document.created_by:
-            link = (
-                f"/stakeholder/projects/requirements-document"
-                f"?id={document_id}&projectId={project_id}"
-            )
-
-            create_notification(
-                user_id=document.created_by,
-                project_id=project_id,
-                document_id=document_id,
-                title="Requirements Document Approved",
-                message=f"Requirements Document v{document.version} has been approved.",
-                notification_type="requirements_approved",
-                link=link,
-            )
+        create_notification(
+            user_id=document.created_by,
+            project_id=project_id,
+            document_id=document_id,
+            title="Requirements Document Approved",
+            message=f"All requirements in Requirements Document v{document.version} have been approved.",
+            notification_type="requirements_approved",
+            link=link,
+        )
 
     db.session.commit()
 
     return jsonify({
-        "message": "Requirement document approved successfully",
+        "message": f"Approved {len(approved_items)} requirement(s)",
         "document": build_requirement_document_summary(document),
         "approval_summary": build_approval_summary(document),
+        "requirements": build_all_requirement_item_summaries(document, template),
+        "changed_requirement_ids": [item.id for item in approved_items],
     }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/approve", methods=["POST"])
+@require_permission("requirements.view", project_arg="project_id")
+def approve_requirement_items(project_id, document_id):
+    return approve_requirement_document(project_id, document_id)
 
 
 @requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/reject", methods=["POST"])
@@ -967,57 +1407,72 @@ def reject_requirement_document(project_id, document_id):
 
     if document.status != "For Approval":
         return jsonify({
-            "message": "Only documents for approval can be rejected"
+            "message": "Only requirements for approval can be rejected"
         }), 400
 
     if document.created_by == current_user_id:
         return jsonify({
-            "message": "The submitter cannot reject their own requirement document"
+            "message": "The user who submitted this document does not need to reject their own requirements"
         }), 403
-
-    required_approvers = get_required_requirement_approvers(
-        project_id=project_id,
-        document=document
-    )
-
-    required_user_ids = {
-        member.user_id
-        for member in required_approvers
-        if member.user_id
-    }
-
-    if current_user_id not in required_user_ids:
-        return jsonify({
-            "message": "You are not assigned as an approver for this requirement document"
-        }), 403
-
-    existing_action = RequirementApproval.query.filter_by(
-        document_id=document.id,
-        user_id=current_user_id,
-    ).first()
-
-    if existing_action:
-        return jsonify({
-            "message": "You already responded to this requirement document",
-            "document": build_requirement_document_summary(document),
-            "approval_summary": build_approval_summary(document),
-        }), 200
 
     data = request.get_json() or {}
+    item_ids = data.get("item_ids") or []
     rejection_reason = (data.get("reason") or "").strip()
 
-    rejection = RequirementApproval(
-        project_id=project_id,
-        document_id=document.id,
-        user_id=current_user_id,
-        status="Rejected",
-        rejection_reason=rejection_reason or None,
-        rejected_at=datetime.utcnow(),
-    )
+    if item_ids and not isinstance(item_ids, list):
+        return jsonify({"message": "item_ids must be a list"}), 400
 
-    db.session.add(rejection)
+    item_ids = [parse_int(item_id) for item_id in item_ids]
+    item_ids = [item_id for item_id in item_ids if item_id]
 
-    document.status = "Rejected"
+    candidate_items = get_requirement_items_for_action(document, item_ids)
+
+    if item_ids and len(candidate_items) != len(set(item_ids)):
+        return jsonify({"message": "One or more selected requirements were not found"}), 404
+
+    if not candidate_items:
+        return jsonify({"message": "No requirements selected for rejection"}), 400
+
+    template = DocumentTemplate.query.get(document.template_id)
+    rejected_items = []
+    now = datetime.utcnow()
+
+    for item in candidate_items:
+        approval = RequirementApproval.query.filter_by(
+            item_id=item.id,
+            user_id=current_user_id,
+        ).first()
+
+        if not approval or approval.status != "Pending":
+            continue
+
+        approval.status = "Rejected"
+        approval.rejection_reason = rejection_reason or None
+        approval.rejected_at = now
+        approval.approved_at = None
+        approval.auto_approved_at = None
+
+        create_requirement_change_log(
+            project_id=project_id,
+            document_id=document.id,
+            item_id=item.id,
+            action="rejected",
+            description=rejection_reason or "Requirement rejected by project member.",
+            after_snapshot=build_requirement_change_snapshot(item, template),
+            changed_by=current_user_id,
+        )
+
+        update_requirement_item_approval_status(document, item, template)
+        rejected_items.append(item)
+
+    if not rejected_items:
+        return jsonify({
+            "message": "You have no pending rejection vote for the selected requirement(s)",
+            "document": build_requirement_document_summary(document),
+            "approval_summary": build_approval_summary(document),
+        }), 400
+
+    recompute_document_approval_status(document, template)
 
     link = (
         f"/stakeholder/projects/requirements-document"
@@ -1029,8 +1484,8 @@ def reject_requirement_document(project_id, document_id):
             user_id=document.created_by,
             project_id=project_id,
             document_id=document_id,
-            title="Requirements Document Rejected",
-            message=f"Requirements Document v{document.version} was rejected and needs revision.",
+            title="Requirement Rejected",
+            message=f"{len(rejected_items)} requirement(s) in Requirements Document v{document.version} were rejected and need revision.",
             notification_type="requirements_rejected",
             link=link,
         )
@@ -1038,10 +1493,18 @@ def reject_requirement_document(project_id, document_id):
     db.session.commit()
 
     return jsonify({
-        "message": "Requirement document rejected",
+        "message": f"Rejected {len(rejected_items)} requirement(s)",
         "document": build_requirement_document_summary(document),
         "approval_summary": build_approval_summary(document),
+        "requirements": build_all_requirement_item_summaries(document, template),
+        "changed_requirement_ids": [item.id for item in rejected_items],
     }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/reject", methods=["POST"])
+@require_permission("requirements.view", project_arg="project_id")
+def reject_requirement_items(project_id, document_id):
+    return reject_requirement_document(project_id, document_id)
 
 
 @requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/freeze", methods=["POST"])
@@ -1053,6 +1516,11 @@ def freeze_requirement_document(project_id, document_id):
 
     if not document:
         return jsonify({"message": "Requirement document not found"}), 404
+
+    if document.created_by != current_user_id:
+        return jsonify({
+            "message": "Only the user who created this document can freeze it"
+        }), 403
 
     if document.status != "Approved":
         return jsonify({"message": "Only approved documents can be frozen"}), 400
@@ -1113,8 +1581,59 @@ def get_requirement_document_approval_summary(project_id, document_id):
     if not is_document_visible_to_current_user(document):
         return hidden_draft_response()
 
+    summary = build_approval_summary(document)
+    db.session.commit()
+
     return jsonify({
-        "summary": build_approval_summary(document)
+        "summary": summary
+    }), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>/approval-summary", methods=["GET"])
+@require_permission("requirements.view", project_arg="project_id")
+def get_requirement_item_approval_summary(project_id, document_id, item_id):
+    document, item = get_requirement_item_record(project_id, document_id, item_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    template = DocumentTemplate.query.get(document.template_id)
+    summary = build_requirement_approval_summary(document, item, template)
+    recompute_document_approval_status(document, template)
+    db.session.commit()
+
+    return jsonify({"summary": summary}), 200
+
+
+@requirements_bp.route("/project/<int:project_id>/requirement-documents/<int:document_id>/items/<int:item_id>/change-logs", methods=["GET"])
+@require_permission("requirements.view", project_arg="project_id")
+def get_requirement_item_change_logs(project_id, document_id, item_id):
+    document, item = get_requirement_item_record(project_id, document_id, item_id)
+
+    if not document:
+        return jsonify({"message": "Requirement document not found"}), 404
+
+    if not is_document_visible_to_current_user(document):
+        return hidden_draft_response()
+
+    if not item:
+        return jsonify({"message": "Requirement item not found"}), 404
+
+    logs = (
+        RequirementChangeLog.query
+        .filter_by(item_id=item.id)
+        .order_by(RequirementChangeLog.created_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "logs": [serialize_requirement_change_log(log) for log in logs]
     }), 200
 
 
@@ -1283,6 +1802,18 @@ def create_requirement_item(project_id, document_id):
     db.session.flush()
 
     replace_item_values(item.id, normalized_values)
+    db.session.flush()
+    db.session.expire(item, ["values"])
+
+    create_requirement_change_log(
+        project_id=project_id,
+        document_id=document.id,
+        item_id=item.id,
+        action="created",
+        description="Requirement item created.",
+        after_snapshot=build_requirement_change_snapshot(item, template),
+    )
+
     db.session.commit()
 
     return jsonify({
@@ -1349,6 +1880,8 @@ def update_requirement_item(project_id, document_id, item_id):
     if not template:
         return jsonify({"message": "Requirements template not found"}), 404
 
+    before_snapshot = build_requirement_change_snapshot(item, template)
+
     data = request.get_json() or {}
     values_input = data.get("values") or {}
 
@@ -1393,6 +1926,23 @@ def update_requirement_item(project_id, document_id, item_id):
             })
 
     replace_item_values(item.id, normalized_values)
+    RequirementApproval.query.filter_by(item_id=item.id).delete(synchronize_session=False)
+    db.session.flush()
+    db.session.expire(item, ["values"])
+
+    create_requirement_change_log(
+        project_id=project_id,
+        document_id=document.id,
+        item_id=item.id,
+        action="updated",
+        description="Requirement item updated. Existing approval votes were cleared.",
+        before_snapshot=before_snapshot,
+        after_snapshot=build_requirement_change_snapshot(item, template),
+    )
+
+    if document.status in ["For Approval", "Approved"]:
+        document.status = "Draft"
+
     db.session.commit()
 
     return jsonify({
@@ -1426,6 +1976,19 @@ def delete_requirement_item(project_id, document_id, item_id):
     if not item:
         return jsonify({"message": "Requirement item not found"}), 404
 
+    template = DocumentTemplate.query.get(document.template_id)
+    before_snapshot = build_requirement_change_snapshot(item, template)
+
+    create_requirement_change_log(
+        project_id=project_id,
+        document_id=document.id,
+        item_id=item.id,
+        action="deleted",
+        description="Requirement item deleted.",
+        before_snapshot=before_snapshot,
+    )
+
+    RequirementApproval.query.filter_by(item_id=item.id).delete(synchronize_session=False)
     RequirementComment.query.filter_by(item_id=item.id).delete(synchronize_session=False)
     RequirementItemValue.query.filter_by(item_id=item.id).delete()
     db.session.delete(item)

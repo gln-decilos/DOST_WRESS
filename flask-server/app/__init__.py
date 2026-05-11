@@ -80,6 +80,7 @@ def create_app():
     from app.models.requirement_approval import RequirementApproval
     from app.models.requirement_comment import RequirementComment
     from app.models.requirement_change_request import RequirementChangeRequest
+    from app.models.requirement_change_log import RequirementChangeLog
 
     from app.models.notification import Notification
 

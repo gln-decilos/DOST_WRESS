@@ -242,6 +242,18 @@ PERMISSIONS = [
         "module": "requirements",
         "description": "Allows user to log and submit change requests for individual requirements.",
     },
+    {
+        "key": "requirements.review_change_request",
+        "label": "Review Requirement Change Requests",
+        "module": "requirements",
+        "description": "Allows user to view submitted requirement change requests before impact analysis is completed outside the system.",
+    },
+    {
+        "key": "requirements.decide_change_request",
+        "label": "Decide Requirement Change Requests",
+        "module": "requirements",
+        "description": "Allows stakeholders to submit the final Proceed or Declined decision after reviewing the uploaded impact analysis report.",
+    },
 
     # Notifications
     {
