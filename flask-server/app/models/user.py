@@ -37,8 +37,13 @@ class User(db.Model):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+    
+    password_reset_token = db.relationship(
+        "PasswordResetToken",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
-    # ✅ NEW: validate user_type
     def set_user_type(self, user_type):
         if user_type not in self.USER_TYPES:
             raise ValueError(f"Invalid user_type: {user_type}")
@@ -111,3 +116,4 @@ class User(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+    

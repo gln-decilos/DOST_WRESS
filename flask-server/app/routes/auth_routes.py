@@ -2,9 +2,13 @@ from flask import Blueprint, request, jsonify, g
 from app.extensions import db
 from app.models.user import User
 from functools import wraps
+from app.models.password_reset_token import PasswordResetToken
+from app.utils.email import send_password_reset_email
 import jwt
 import os
 from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash
+import secrets
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -87,7 +91,74 @@ def signin():
         "user": user.to_dict()
     }), 200
 
+@auth_bp.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.get_json() or {}
+    email = data.get("email", "").strip().lower()
 
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"message": "If email exists, reset link sent"}), 200
+
+    token = secrets.token_urlsafe(64)
+    expires_at = datetime.utcnow() + timedelta(minutes=15)
+
+    reset_entry = PasswordResetToken(
+        user_id=user.id,
+        token=token,
+        expires_at=expires_at
+    )
+
+    db.session.add(reset_entry)
+    db.session.commit()
+
+    reset_link = f"http://localhost:3000/reset-password?token={token}"
+    send_password_reset_email(
+    email=user.email,
+    full_name=f"{user.first_name} {user.last_name}",
+    reset_link=reset_link
+)
+
+    return jsonify({"message": "If email exists, reset link sent"}), 200
+
+@auth_bp.route("/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json() or {}
+
+    token = data.get("token")
+    new_password = data.get("new_password")
+
+    if not token or not new_password:
+        return jsonify({"error": "Token and new password required"}), 400
+
+    reset_entry = PasswordResetToken.query.filter_by(
+        token=token,
+        used=False
+    ).first()
+
+    if not reset_entry:
+        return jsonify({"error": "Invalid or used token"}), 400
+
+    if reset_entry.expires_at < datetime.utcnow():
+        return jsonify({"error": "Token expired"}), 400
+
+    user = User.query.get(reset_entry.user_id)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    user.password_hash = generate_password_hash(new_password)
+
+    reset_entry.used = True
+
+    db.session.commit()
+
+    return jsonify({"message": "Password updated successfully"}), 200
+    
 @auth_bp.route("/me", methods=["GET"])
 @login_required
 def me():

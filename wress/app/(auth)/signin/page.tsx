@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
+import { Eye, EyeOff } from "lucide-react"
 
 const API_BASE_URL = "http://localhost:5000/api/auth"
 
@@ -24,6 +25,8 @@ function SignInContent() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
+
+  const [showPassword, setShowPassword] = useState(false)
 
   const getRedirectPathByUserType = (user_type: string) => {
     switch (user_type) {
@@ -57,8 +60,6 @@ function SignInContent() {
       })
 
       const data = await response.json()
-      console.log("SIGNIN RESPONSE:", data)
-      console.log("STATUS:", response.status)
 
       if (!response.ok) {
         setMessage(data.message || data.error || "Sign in failed.")
@@ -74,7 +75,6 @@ function SignInContent() {
 
       if (data.token) {
         localStorage.setItem('token', data.token)
-        console.log("Token stored successfully")
       } else {
         console.error("No token received from server")
         setMessage("Authentication failed. Please try again.")
@@ -82,7 +82,6 @@ function SignInContent() {
       }
 
       login(user)
-      console.log("User signed in successfully. ID saved:", user.id)
 
       const redirectPath = getRedirectPathByUserType(user.user_type)
 
@@ -101,62 +100,111 @@ function SignInContent() {
   }
 
   return (
-    <main className="min-h-[80dvh] flex items-center justify-center p-6">
-      <div className="w-full max-w-sm rounded-2xl bg-card p-6 ring-1 ring-border">
-        <h1 className="text-2xl font-semibold text-foreground mb-2 text-balance">
-          Sign in
-        </h1>
+    <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-6">
+      <div className="w-full max-w-md">
 
-        <p className="text-sm text-muted-foreground mb-6">
-          Welcome back. Enter your credentials.
-        </p>
+        {/* Card */}
+        <div className="rounded-2xl bg-card shadow-xl ring-1 ring-border/60 p-8 space-y-6">
 
-        <form className="grid gap-4" onSubmit={handleSignIn}>
-          <label className="grid gap-2">
-            <span className="text-sm text-muted-foreground">Email</span>
-            <input
-              type="email"
-              className="h-10 rounded-md bg-background ring-1 ring-border px-3 outline-none focus:ring-2 focus:ring-brand"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              required
-            />
-          </label>
+          {/* Logo */}
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand shadow-md">
+            <svg className="h-6 w-6 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+              />
+            </svg>
+          </div>
 
-          <label className="grid gap-2">
-            <span className="text-sm text-muted-foreground">Password</span>
-            <input
-              type="password"
-              className="h-10 rounded-md bg-background ring-1 ring-border px-3 outline-none focus:ring-2 focus:ring-brand"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-            />
-          </label>
-
-          {message && (
-            <p className="text-sm text-red-500 bg-red-50 p-2 rounded-md">
-              {message}
+          {/* Title */}
+          <div className="text-center space-y-1">
+            <h1 className="text-2xl font-semibold text-foreground">
+              Sign in
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Welcome back! Enter your credentials.
             </p>
-          )}
+          </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="h-10 rounded-md bg-brand text-background disabled:opacity-50 hover:bg-brand/90 transition-colors"
-          >
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
-        </form>
+          {/* Form */}
+          <form className="space-y-4" onSubmit={handleSignIn}>
 
-        <p className="mt-4 mb-3 text-sm text-muted-foreground">
-          Don't have an account?{" "}
-          <Link href="/signup" className="text-brand hover:underline">
-            Sign up
-          </Link>
-        </p>
+            {/* Email */}
+            <div className="space-y-2">
+              <label className="text-sm text-muted-foreground">Email</label>
+              <input
+                type="email"
+                className="h-11 w-full rounded-lg bg-background ring-1 ring-border px-3 outline-none focus:ring-2 focus:ring-brand transition"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+              />
+            </div>
+
+            {/* Password */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-muted-foreground">Password</label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-muted-foreground hover:text-brand"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  className="h-11 w-full rounded-lg bg-background ring-1 ring-border px-3 pr-16 outline-none focus:ring-2 focus:ring-brand transition"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-brand"
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            {/* Error message */}
+            {message && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                <p className="text-sm text-red-700">{message}</p>
+              </div>
+            )}
+
+            {/* Button */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="h-11 w-full rounded-lg bg-brand text-background font-semibold hover:bg-brand/90 transition disabled:opacity-50"
+            >
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
+
+          {/* Footer */}
+          <div className="text-center space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Don't have an account?{" "}
+              <Link href="/signup" className="text-brand font-medium hover:underline">
+                Create account
+              </Link>
+            </p>
+
+            <p className="text-xs text-muted-foreground">
+              © {new Date().getFullYear()} WRESS
+            </p>
+          </div>
+
+        </div>
       </div>
     </main>
   )

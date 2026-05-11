@@ -62,6 +62,7 @@ def create_app():
     from app.models.project_stakeholder import ProjectStakeholder
 
     from app.models.user import User
+    from app.models.password_reset_token import PasswordResetToken
     from app.models.role import Role
     from app.models.permission import Permission
     from app.models.user_roles import UserRole
@@ -105,6 +106,7 @@ def create_app():
     from app.routes.admin_template_field_routes import admin_template_field_bp
 
     from app.routes.notification_routes import notification_bp
+    from app.routes.profile_routes import profile_bp
 
     # BLUEPRINT REGISTRATION
     app.register_blueprint(auth_bp)
@@ -124,6 +126,7 @@ def create_app():
     app.register_blueprint(project_stakeholder_bp, url_prefix="/api/business-analyst")
 
     app.register_blueprint(notification_bp, url_prefix="/api")
+    app.register_blueprint(profile_bp, url_prefix="/api/profile")
     app.register_blueprint(orgadmin_project_bp, url_prefix="/api/orgadmin/projects")
 
     app.register_blueprint(admin_template_bp)
