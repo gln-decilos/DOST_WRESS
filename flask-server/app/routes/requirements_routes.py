@@ -759,6 +759,9 @@ def update_requirement_item_approval_status(document, item, template=None, apply
 
 
 def recompute_document_approval_status(document, template=None):
+    if document.status in ["Frozen", "Unfrozen"]:
+        return document.status
+
     template = template or DocumentTemplate.query.get(document.template_id)
     items = list(document.requirement_items or [])
 
@@ -872,6 +875,7 @@ def build_approval_summary(document):
         "rejected": is_rejected or document.status == "Rejected",
         "has_rejection_votes": has_rejection_votes,
         "frozen": document.status == "Frozen",
+        "unfrozen": document.status == "Unfrozen",
         "total_required": total_required_votes,
         "approved_count": approved_count,
         "rejected_count": rejected_count,
