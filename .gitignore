@@ -14,6 +14,10 @@ env/
 # Flask instance folder
 instance/
 
+# Uploaded files
+flask-server/uploads/
+flask-server/uploads/change_requests/
+
 # VS Code
 .vscode/
 
